@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Runs every portable check: Model.js unit tests against saved ESPN responses,
+# and a syntax and argument check of bin/mma-api. None of it needs Omarchy, a
+# display or the network.
+set -u
+cd "$(dirname "$0")/.." || exit 1
+failed=""
+echo "== Model.js"; node --test tests/model.test.js > /dev/null 2>&1 && echo ok || { node --test tests/model.test.js; failed="$failed model"; }
+echo "== bin/mma-api"
+bash -n bin/mma-api \
+  && ! bin/mma-api events 'x;y' 20261029-20261120 > /dev/null 2>&1 \
+  && ! bin/mma-api events ufc 'nope' > /dev/null 2>&1 \
+  && ! bin/mma-api card ufc 'abc' 1 > /dev/null 2>&1 \
+  && echo ok || failed="$failed api"
+[ -z "$failed" ] && echo "ALL PASSED" || { echo "FAILED:$failed"; exit 1; }

@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "id": "anavarre.mma",
+  "name": "MMA Events",
+  "version": "0.1.0",
+  "author": "Aurelien Navarre",
+  "license": "MIT",
+  "description": "Upcoming MMA events from the promotions you follow, with full fight cards, in the bar.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "MMA Events",
+    "description": "Lists upcoming MMA events and opens a fight card with the main card first, then the prelims.",
+    "category": "Sports",
+    "aliases": [
+      "mma",
+      "ufc",
+      "pfl",
+      "fights"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "organizations": [
+        "ufc"
+      ],
+      "eventLimit": 10,
+      "lookaheadDays": 120,
+      "refreshMinutes": 180,
+      "timeFormat": "12h",
+      "textSize": "medium"
+    },
+    "schema": [
+      {
+        "key": "organizations",
+        "type": "multiselect",
+        "label": "Organizations",
+        "description": "Which promotions to show events for. UFC and PFL are available today; the rest are coming soon.",
+        "noSelectionText": "None selected",
+        "placeholderText": "Search organizations...",
+        "emptyText": "No organizations",
+        "options": [
+          {
+            "value": "ufc",
+            "label": "UFC",
+            "description": "Ultimate Fighting Championship"
+          },
+          {
+            "value": "pfl",
+            "label": "PFL",
+            "description": "Professional Fighters League"
+          },
+          {
+            "value": "ksw",
+            "label": "KSW (coming soon)",
+            "description": "Konfrontacja Sztuk Walki. No data source yet."
+          },
+          {
+            "value": "one",
+            "label": "ONE Championship (coming soon)",
+            "description": "No data source yet."
+          },
+          {
+            "value": "bellator",
+            "label": "Bellator (coming soon)",
+            "description": "No data source yet."
+          },
+          {
+            "value": "rizin",
+            "label": "RIZIN (coming soon)",
+            "description": "No data source yet."
+          },
+          {
+            "value": "cage-warriors",
+            "label": "Cage Warriors (coming soon)",
+            "description": "No data source yet."
+          },
+          {
+            "value": "oktagon",
+            "label": "OKTAGON (coming soon)",
+            "description": "No data source yet."
+          },
+          {
+            "value": "bkfc",
+            "label": "BKFC (coming soon)",
+            "description": "Bare Knuckle FC. No data source yet."
+          }
+        ],
+        "defaultValue": [
+          "ufc"
+        ]
+      },
+      {
+        "key": "eventLimit",
+        "type": "integer",
+        "label": "Events to show",
+        "min": 1,
+        "max": 30,
+        "step": 1,
+        "defaultValue": 10,
+        "description": "How many upcoming events the panel lists, 1 to 30."
+      },
+      {
+        "key": "lookaheadDays",
+        "type": "enum",
+        "label": "Look ahead (days)",
+        "options": [
+          30,
+          60,
+          90,
+          120,
+          180,
+          365
+        ],
+        "defaultValue": 120,
+        "description": "How far ahead to look for events."
+      },
+      {
+        "key": "refreshMinutes",
+        "type": "enum",
+        "label": "Refresh every (minutes)",
+        "options": [
+          60,
+          120,
+          180,
+          360,
+          720,
+          1440
+        ],
+        "defaultValue": 180,
+        "description": "How often the list refreshes on its own."
+      },
+      {
+        "key": "timeFormat",
+        "type": "enum",
+        "label": "Time format",
+        "options": [
+          "12h",
+          "24h"
+        ],
+        "defaultValue": "12h",
+        "description": "12-hour or 24-hour clock for event times, shown in your local time zone."
+      },
+      {
+        "key": "textSize",
+        "type": "enum",
+        "label": "Text size",
+        "options": [
+          "small",
+          "medium",
+          "large",
+          "xlarge"
+        ],
+        "defaultValue": "medium",
+        "description": "How large the panel's text reads: small, medium, large or xlarge (extra large)."
+      }
+    ]
+  }
+}

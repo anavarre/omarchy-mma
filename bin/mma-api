@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Fetches MMA data from ESPN's public (unofficial, keyless) API and prints JSON
+# on stdout. Run by Service.qml, which parses the output with Model.js.
+#
+#   mma-api events <league> <YYYYMMDD-YYYYMMDD>
+#       The scoreboard for the date range: events, fights and fighters.
+#   mma-api card <league> <eventId> <competitionId>...
+#       A JSON array with one core-API competition per id. This is where the
+#       card segment (main, prelims1, prelims2) lives; the scoreboard has none.
+set -u
+
+SITE_BASE=${MMA_SITE_BASE:-https://site.api.espn.com/apis/site/v2/sports/mma}
+CORE_BASE=${MMA_CORE_BASE:-https://sports.core.api.espn.com/v2/sports/mma/leagues}
+PARALLEL=8
+
+fetch() { curl -fsS --max-time 20 --retry 1 -A "omarchy-mma" "$1"; }
+die() { echo "mma-api: $*" >&2; exit 2; }
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+
+case "$cmd" in
+  events)
+    [ $# -eq 2 ] || die "usage: events <league> <dates>"
+    [[ $1 =~ ^[a-z0-9-]+$ ]] || die "bad league"
+    [[ $2 =~ ^[0-9]{8}-[0-9]{8}$ ]] || die "bad dates"
+    fetch "$SITE_BASE/$1/scoreboard?dates=$2&limit=100"
+    ;;
+  card)
+    [ $# -ge 3 ] || die "usage: card <league> <eventId> <competitionId>..."
+    [[ $1 =~ ^[a-z0-9-]+$ ]] || die "bad league"
+    [[ $2 =~ ^[0-9]+$ ]] || die "bad event"
+    league=$1 event=$2
+    shift 2
+    tmp=$(mktemp -d) || exit 1
+    trap 'rm -rf "$tmp"' EXIT
+    n=0
+    for id in "$@"; do
+      [[ $id =~ ^[0-9]+$ ]] || continue
+      n=$((n + 1))
+      fetch "$CORE_BASE/$league/events/$event/competitions/$id?lang=en" > "$tmp/$n.json" 2> /dev/null &
+      # Throttle: wait for the batch to finish before starting the next.
+      if [ $((n % PARALLEL)) -eq 0 ]; then wait; fi
+    done
+    wait
+    printf '['
+    sep=""
+    for ((i = 1; i <= n; i++)); do
+      [ -s "$tmp/$i.json" ] || continue
+      printf '%s' "$sep"
+      cat "$tmp/$i.json"
+      sep=","
+    done
+    printf ']'
+    ;;
+  *)
+    die "usage: mma-api events|card ..."
+    ;;
+esac
