@@ -448,3 +448,34 @@ test("an event's fights are capped, from the API and from the cache", () => {
   const cached = { id: "1", org: "ufc", fights: Array.from({ length: 200 }, (_, i) => ({ id: String(i + 1) })) };
   assert.strictEqual(M.parseCache(M.serializeCache([cached], 1)).events[0].fights.length, M.maxFightsPerEvent);
 });
+
+test("finished fights name a winner and show how long they lasted", () => {
+  const comp = (completed, winners) => ({
+    id: "9",
+    status: { period: 3, displayClock: "3:26", type: { name: completed ? "STATUS_FINAL" : "STATUS_SCHEDULED", completed } },
+    competitors: winners.map((winner, i) => ({ order: i + 1, winner, athlete: { displayName: "Fighter " + (i + 1) } })),
+  });
+  const parse = (c) => M.parseScoreboard({ events: [{ id: "1", name: "X", date: "2026-10-01T00:00Z", competitions: [c] }] }, "ufc")[0].fights[0];
+
+  const left = parse(comp(true, [true, false]));
+  assert.deepStrictEqual([M.outcome(left, 0), M.outcome(left, 1)], ["win", "loss"]);
+  assert.strictEqual(M.resultLabel(left), "R3 3:26");
+
+  const right = parse(comp(true, [false, true]));
+  assert.deepStrictEqual([M.outcome(right, 0), M.outcome(right, 1)], ["loss", "win"]);
+
+  // A draw or no-contest is final, but neither side won.
+  const draw = parse(comp(true, [false, false]));
+  assert.deepStrictEqual([M.outcome(draw, 0), M.outcome(draw, 1)], ["none", "none"]);
+
+  const upcoming = parse(comp(false, [false, false]));
+  assert.deepStrictEqual([M.outcome(upcoming, 0), M.outcome(upcoming, 1)], ["none", "none"]);
+  assert.strictEqual(M.resultLabel(upcoming), "");
+
+  // The result survives the cache.
+  const event = { id: "1", org: "ufc", name: "X", date: "2026-10-01T00:00Z", fights: [left] };
+  const back = M.parseCache(M.serializeCache([event], 1)).events[0].fights[0];
+  assert.strictEqual(back.done, true);
+  assert.strictEqual(M.resultLabel(back), "R3 3:26");
+  assert.strictEqual(M.outcome(back, 0), "win");
+});

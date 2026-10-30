@@ -357,6 +357,11 @@ function sortedFighters(competitors) {
   return out.slice(0, 2)
 }
 
+function roundNumber(v) {
+  var n = Number(v)
+  return isFinite(n) && n > 0 ? Math.floor(n) : 0
+}
+
 function fight(comp) {
   var periods = comp.format && comp.format.regulation ? Number(comp.format.regulation.periods) : 0
   return {
@@ -365,6 +370,9 @@ function fight(comp) {
     rounds: isFinite(periods) ? periods : 0,
     startDate: String(comp.startDate || comp.date || ""),
     status: String((comp.status && comp.status.type && comp.status.type.name) || ""),
+    done: !!(comp.status && comp.status.type && comp.status.type.completed === true),
+    round: roundNumber(comp.status && comp.status.period),
+    clock: String((comp.status && comp.status.displayClock) || ""),
     fighters: sortedFighters(comp.competitors),
     // Filled in from the core API once the card is opened.
     segment: "",
@@ -628,6 +636,24 @@ function weightClassLabel(f) {
   return parts.join(" · ")
 }
 
+// "win" or "loss" for fighter `i` of a finished fight. ESPN reports `winner:
+// false` for both sides of a draw, a no-contest and a bout still to come, so
+// only a final fight with a winner on one side says anything.
+function outcome(f, i) {
+  if (!f.done || !(f.fighters[0].winner || f.fighters[1].winner)) return "none"
+  return f.fighters[i].winner ? "win" : "loss"
+}
+
+// "R3 3:26 KO/TKO (Punch)" for a finished fight; the method is empty until the
+// card has loaded (or if ESPN has none, as for some old fights).
+function resultLabel(f) {
+  if (!f.done) return ""
+  // A decision always goes the distance, so the round and time say nothing.
+  if (/decision/i.test(f.method || "")) return f.method
+  var end = f.round ? "R" + f.round + (f.clock ? " " + f.clock : "") : ""
+  return [end, f.method || ""].filter(Boolean).join(" ")
+}
+
 // ------------------------------------------------------------------- cache
 
 function serializeCache(events, fetchedAt) {
@@ -671,6 +697,9 @@ function sanitizeFight(f) {
     rounds: isFinite(rounds) && rounds > 0 ? Math.floor(rounds) : 0,
     startDate: str(f.startDate),
     status: str(f.status),
+    done: f.done === true,
+    round: roundNumber(f.round),
+    clock: str(f.clock),
     fighters: fighters,
     segment: "",
     matchNumber: 0,

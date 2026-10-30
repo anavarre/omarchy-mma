@@ -61,6 +61,8 @@ Panel {
   property string textSize: "medium"
   property string timeFormat: "12h"
   property string timeZone: "venue"
+  // Winners are spoilers, so they stay hidden until asked for.
+  property bool showResults: false
   readonly property var textScales: ({ small: 0.85, medium: 1.0, large: 1.2, xlarge: 1.45 })
   readonly property real textScale: root.textScales[root.textSize] || 1.0
 
@@ -155,6 +157,8 @@ Panel {
     if (root.hostWidget && typeof root.hostWidget.saveTimeZone === "function")
       root.hostWidget.saveTimeZone(value)
   }
+
+  function outcomeOf(fight, i) { return root.showResults ? Model.outcome(fight, i) : "none" }
 
   readonly property int keepDaysIndex: Math.max(0, Model.keepDaysChoices.indexOf(root.keepFinishedDays))
 
@@ -905,8 +909,8 @@ Panel {
                             width: parent.width
                             elide: Text.ElideRight
                             textFormat: Text.PlainText
-                            text: bout.modelData.fighters[0].name
-                            color: bout.modelData.fighters[0].tba ? root.dim : root.foreground
+                            text: (root.outcomeOf(bout.modelData, 0) === "win" ? "✓ " : "") + bout.modelData.fighters[0].name
+                            color: root.outcomeOf(bout.modelData, 0) === "win" ? "#2ea043" : (bout.modelData.fighters[0].tba ? root.dim : root.foreground)
                             font.family: root.fontFamily
                             font.pixelSize: root.fs(Style.font.body)
                             font.bold: !bout.modelData.fighters[0].tba
@@ -942,8 +946,8 @@ Panel {
                             horizontalAlignment: Text.AlignRight
                             elide: Text.ElideRight
                             textFormat: Text.PlainText
-                            text: bout.modelData.fighters[1].name
-                            color: bout.modelData.fighters[1].tba ? root.dim : root.foreground
+                            text: bout.modelData.fighters[1].name + (root.outcomeOf(bout.modelData, 1) === "win" ? " ✓" : "")
+                            color: root.outcomeOf(bout.modelData, 1) === "win" ? "#2ea043" : (bout.modelData.fighters[1].tba ? root.dim : root.foreground)
                             font.family: root.fontFamily
                             font.pixelSize: root.fs(Style.font.body)
                             font.bold: !bout.modelData.fighters[1].tba
@@ -969,7 +973,7 @@ Panel {
                         textFormat: Text.PlainText
                         visible: text !== ""
                         text: Model.crownFor(bout.modelData) + [Model.isMainEvent(section.modelData, bout.index) ? "Main event" : "",
-                          Model.weightClassLabel(bout.modelData)].filter(function(s) { return s !== "" }).join(" · ")
+                          Model.weightClassLabel(bout.modelData), (root.showResults ? Model.resultLabel(bout.modelData) : "")].filter(function(s) { return s !== "" }).join(" · ")
                         color: root.dim
                         font.family: root.fontFamily
                         font.pixelSize: root.fs(Style.font.bodySmall)
@@ -978,6 +982,7 @@ Panel {
                   }
                 }
               }
+                          opacity: root.outcomeOf(bout.modelData, 0) === "loss" ? 0.5 : 1
             }
           }
         }
@@ -1014,6 +1019,7 @@ Panel {
             font.family: root.fontFamily
             font.pixelSize: root.fs(Style.font.bodySmall)
           }
+                          opacity: root.outcomeOf(bout.modelData, 1) === "loss" ? 0.5 : 1
           Text {
             visible: !root.showSettings && !root.showCard
             text: "s Settings"
