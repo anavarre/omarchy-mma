@@ -384,3 +384,47 @@ test("interim and non-title fights have no champion", () => {
   assert.strictEqual(seg("UFC Interim Welterweight Title"), false);
   assert.strictEqual(seg(""), false);
 });
+
+// ESPN's JSON is parsed for its shape as well as its syntax: a list that comes
+// back as an object or a string must not throw, since an exception in the
+// service's process handler would leave it loading forever.
+test("parseScoreboard survives fields of the wrong type", () => {
+  const shapes = [
+    { events: [null, "x", 7, { id: 1, competitions: {} }] },
+    { events: [{ id: 1, competitions: [null, "x", { id: 2, competitors: {} }] }] },
+    { events: [{ id: 1, competitions: [{ id: 2, competitors: [null, { records: "abc" }, { athlete: { flag: 5 }, order: "z" }] }] }] },
+    { events: [{ id: 1, competitions: [{ id: 2, broadcasts: [{ names: "abc" }, "x"] }] }] },
+    { events: [{ id: 1, competitions: [{ id: 2, broadcasts: "abc", venue: "x", format: { regulation: "x" }, type: 5, status: { type: null } }] }] },
+    { events: [{ id: 1, links: "x", venues: "x", status: { type: null } }] },
+    { events: [{ id: 1, links: [null, { rel: 5, href: "https://a.b/c" }, { rel: "event", href: "https://a.b/c" }] }] },
+  ];
+  for (const s of shapes) {
+    const events = M.parseScoreboard(s, "ufc");
+    assert.ok(Array.isArray(events), JSON.stringify(s));
+    for (const e of events) {
+      assert.strictEqual(e.url, "");
+      for (const f of e.fights) assert.strictEqual(f.fighters.length, 2);
+    }
+  }
+  // A string rel is not a list, so it is not the event link.
+  assert.strictEqual(M.parseScoreboard({ events: [{ id: 1, links: [{ rel: ["event"], href: "https://a.b/c" }] }] }, "ufc")[0].url, "https://a.b/c");
+});
+
+test("parseSegments and buildCard survive fields of the wrong type", () => {
+  for (const s of [[{ id: 1, types: "abc" }], [{ id: 1, types: {} }], [{ id: 1, cardSegment: null }], [{ id: 1, cardSegment: "x" }], ["abc", null, 7]]) {
+    const map = M.parseSegments(s);
+    for (const k in map) assert.strictEqual(map[k].champion, false);
+  }
+  assert.deepStrictEqual(M.buildCard({ fights: {} }, {}), []);
+  assert.deepStrictEqual(M.buildCard({ fights: "abc" }, null), []);
+  assert.deepStrictEqual(M.buildCard(null, {}), []);
+});
+
+test("an event's fights are capped, from the API and from the cache", () => {
+  const many = { events: [{ id: 1, competitions: Array.from({ length: 200 }, (_, i) => ({ id: i + 1 })) }] };
+  const e = M.parseScoreboard(many, "ufc")[0];
+  assert.strictEqual(e.fights.length, M.maxFightsPerEvent);
+  assert.strictEqual(e.fightCount, M.maxFightsPerEvent);
+  const cached = { id: "1", org: "ufc", fights: Array.from({ length: 200 }, (_, i) => ({ id: String(i + 1) })) };
+  assert.strictEqual(M.parseCache(M.serializeCache([cached], 1)).events[0].fights.length, M.maxFightsPerEvent);
+});

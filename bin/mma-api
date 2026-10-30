@@ -11,17 +11,24 @@
 # MMA_SITE_BASE and MMA_CORE_BASE override the endpoints for running the
 # script by hand. They must be https: curl refuses every other scheme, and
 # Service.qml does not pass them through from the shell's environment.
-set -u
+set -u -o pipefail
 
 SITE_BASE=${MMA_SITE_BASE:-https://site.api.espn.com/apis/site/v2/sports/mma}
 CORE_BASE=${MMA_CORE_BASE:-https://sports.core.api.espn.com/v2/sports/mma/leagues}
 PARALLEL=16
+# A card has at most about 15 fights; never make more requests than this for
+# one event, whatever the scoreboard listed.
+MAX_FIGHTS=40
 # ESPN's largest answer is well under 1 MB; refuse anything far beyond that.
 MAX_BYTES=8388608
 
+# --max-filesize only works when the server announces a length, so the body is
+# also cut at the limit: head stops reading, curl fails on the closed pipe and
+# pipefail makes that the function's status. The truncated output is then
+# ignored: Service.qml reads stdout only on exit 0, and `card` deletes the file.
 fetch() {
   curl -fsS --proto '=https' --max-filesize "$MAX_BYTES" --max-time 20 --retry 1 \
-    -A "omarchy-mma" "$1"
+    -A "omarchy-mma" "$1" | head -c "$MAX_BYTES"
 }
 die() { echo "mma-api: $*" >&2; exit 2; }
 
@@ -46,8 +53,11 @@ case "$cmd" in
     n=0
     for id in "$@"; do
       [[ $id =~ ^[0-9]+$ ]] || continue
+      [ "$n" -lt "$MAX_FIGHTS" ] || break
       n=$((n + 1))
-      fetch "$CORE_BASE/$league/events/$event/competitions/$id?lang=en" > "$tmp/$n.json" 2> /dev/null &
+      # A failed or oversized fetch leaves no file, so it is skipped below.
+      { fetch "$CORE_BASE/$league/events/$event/competitions/$id?lang=en" > "$tmp/$n.json" 2> /dev/null \
+          || rm -f "$tmp/$n.json"; } &
       # Throttle: wait for the batch to finish before starting the next.
       if [ $((n % PARALLEL)) -eq 0 ]; then wait; fi
     done

@@ -305,13 +305,25 @@ function parseJson(text) {
   try { return JSON.parse(text) } catch (e) { return null }
 }
 
+// ESPN's responses are trusted for nothing, not even their shape: a field
+// that should be a list may be an object, a string or missing, and a crash in
+// here would leave the service stuck loading. Every list is read through
+// these, and events and fights that are not objects are dropped.
+function list(v) { return Array.isArray(v) ? v : [] }
+function isObject(v) { return v !== null && typeof v === "object" }
+
+// A fight card is at most about 15 bouts; the limit caps the card fetch,
+// which runs one request per fight, whatever the scoreboard claims.
+var maxFightsPerEvent = 40
+
 function isTba(name) { return name === "" || /\btba\b/i.test(name) }
 
 function fighter(c) {
   var a = (c && c.athlete) || {}
   var name = String(a.displayName || a.fullName || "")
   var tba = isTba(name)
-  var rec = c && c.records && c.records.length > 0 ? c.records[0].summary : ""
+  var recs = list(c && c.records)
+  var rec = recs.length > 0 && isObject(recs[0]) ? recs[0].summary : ""
   return {
     name: tba ? "TBA" : name,
     shortName: tba ? "TBA" : String(a.shortName || name),
@@ -327,12 +339,12 @@ function fighter(c) {
 // lists the competitors in no fixed order, so sort by it. Callers put
 // `fighters[0]` on the left and `fighters[1]` on the right.
 function sortedFighters(competitors) {
-  var list = (competitors || []).map(function(c, i) {
-    var o = Number(c.order)
-    return { order: isFinite(o) && o > 0 ? o : i + 1, c: c }
+  var sides = list(competitors).map(function(c, i) {
+    var o = Number(isObject(c) ? c.order : NaN)
+    return { order: isFinite(o) && o > 0 ? o : i + 1, c: isObject(c) ? c : null }
   })
-  list.sort(function(a, b) { return a.order - b.order })
-  var out = list.map(function(x) { return fighter(x.c) })
+  sides.sort(function(a, b) { return a.order - b.order })
+  var out = sides.map(function(x) { return fighter(x.c) })
   while (out.length < 2) out.push(fighter(null))
   return out.slice(0, 2)
 }
@@ -363,8 +375,8 @@ function venueText(venue) {
 function broadcastText(comp) {
   if (!comp) return ""
   if (comp.broadcast) return String(comp.broadcast)
-  var b = comp.broadcasts && comp.broadcasts[0]
-  return b && b.names ? b.names.join(", ") : ""
+  var b = list(comp.broadcasts)[0]
+  return isObject(b) ? list(b.names).map(String).join(", ") : ""
 }
 
 // A URL that may be handed to the browser launcher: https only, no
@@ -376,10 +388,10 @@ function safeUrl(href) {
 
 // The event's ESPN page, from the link marked as the event's own.
 function eventUrl(e) {
-  var links = e.links || []
+  var links = list(e.links)
   for (var i = 0; i < links.length; i++) {
     var l = links[i]
-    if (l && l.rel && l.rel.indexOf("event") >= 0 && safeUrl(l.href) !== "") return safeUrl(l.href)
+    if (isObject(l) && list(l.rel).indexOf("event") >= 0 && safeUrl(l.href) !== "") return safeUrl(l.href)
   }
   return ""
 }
@@ -392,14 +404,16 @@ function parseScoreboard(text, orgId) {
   var promo = promotionById(orgId)
   var out = []
   data.events.forEach(function(e) {
-    var comps = e.competitions || []
+    if (!isObject(e)) return
+    var comps = list(e.competitions).filter(isObject).slice(0, maxFightsPerEvent)
     var status = (e.status && e.status.type && e.status.type.name) || ""
     if (status === "STATUS_FINAL" || status === "STATUS_CANCELED") return
     var fights = comps.map(fight)
     var first = comps[0] || null
     // The main event is the last fight the scoreboard lists.
     var headliner = fights.length > 0 ? fights[fights.length - 1] : null
-    var venue = (e.venues && e.venues[0]) || (first && first.venue) || null
+    var venues = list(e.venues).filter(isObject)
+    var venue = venues[0] || (first && isObject(first.venue) ? first.venue : null)
     out.push({
       id: String(e.id),
       org: orgId,
@@ -442,7 +456,7 @@ function mergeEvents(lists, limit) {
 var titleGlyph = "\uD83D\uDC51"
 
 function isChampionFight(c) {
-  return (c.types || []).some(function(t) {
+  return list(c.types).some(function(t) {
     var text = String(t && t.text || "")
     return /\btitle\b/i.test(text) && !/\binterim\b/i.test(text)
   })
@@ -455,8 +469,8 @@ function parseSegments(text) {
   var map = ({})
   if (!Array.isArray(data)) return map
   data.forEach(function(c) {
-    if (!c || c.id === undefined) return
-    var seg = c.cardSegment || {}
+    if (!isObject(c) || c.id === undefined) return
+    var seg = isObject(c.cardSegment) ? c.cardSegment : {}
     map[String(c.id)] = {
       segment: String(seg.name || ""),
       label: String(seg.description || ""),
@@ -481,7 +495,7 @@ function segmentRank(key) {
 // the prelims. Inside each section the main event comes first.
 function buildCard(event, segments) {
   segments = segments || ({})
-  var fights = (event.fights || []).map(function(f, i) {
+  var fights = list(event && event.fights).map(function(f, i) {
     var s = segments[f.id]
     var copy = {}
     for (var k in f) copy[k] = f[k]
@@ -632,7 +646,7 @@ function sanitizeEvent(e) {
   if (!e || typeof e !== "object" || !isId(e.id)) return null
   var promo = promotionById(e.org)
   if (!promo || !promo.enabled) return null
-  var fights = (Array.isArray(e.fights) ? e.fights : []).map(sanitizeFight).filter(function(f) { return f !== null })
+  var fights = list(e.fights).slice(0, maxFightsPerEvent).map(sanitizeFight).filter(function(f) { return f !== null })
   return {
     id: String(e.id),
     org: promo.id,

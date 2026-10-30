@@ -195,16 +195,26 @@ Item {
     onExited: function(exitCode) {
       if (eventsProcess.generation !== root.generation) { Qt.callLater(root.fetchNext); return }
       root.pending.shift()
+      // A parser exception here would skip fetchNext and leave the service
+      // loading for good, so a response that cannot be read counts as a failure.
+      var error = ""
       if (exitCode === 0) {
-        var parsed = Model.parseScoreboard(eventsOut.text, eventsProcess.org)
-        var g = root.gathered
-        g[eventsProcess.org] = parsed
-        root.gathered = g
+        try {
+          var parsed = Model.parseScoreboard(eventsOut.text, eventsProcess.org)
+          var g = root.gathered
+          g[eventsProcess.org] = parsed
+          root.gathered = g
+        } catch (e) {
+          error = "Unreadable response from ESPN."
+        }
       } else {
+        error = Model.errorMessage(eventsErr.text, exitCode)
+      }
+      if (error !== "") {
         var f = root.failures
         f.push(eventsProcess.org)
         root.failures = f
-        root.lastError = Model.errorMessage(eventsErr.text, exitCode)
+        root.lastError = error
       }
       Qt.callLater(root.fetchNext)
     }
@@ -222,10 +232,16 @@ Item {
     onExited: function(exitCode) {
       var job = cardProcess.job
       if (job) {
-        var segments = exitCode === 0 ? Model.parseSegments(cardOut.text) : ({})
-        var ok = Object.keys(segments).length > 0
-        root.setCard(job.id, Model.buildCard(job.event, segments),
-          ok ? "" : "Card order is estimated from start times.", ok)
+        var sections = [], ok = false
+        try {
+          var segments = exitCode === 0 ? Model.parseSegments(cardOut.text) : ({})
+          ok = Object.keys(segments).length > 0
+          sections = Model.buildCard(job.event, segments)
+        } catch (e) {
+          sections = []
+          ok = false
+        }
+        root.setCard(job.id, sections, ok ? "" : "Card order is estimated from start times.", ok)
       }
       Qt.callLater(root.nextCard)
     }
