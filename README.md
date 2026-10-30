@@ -1,4 +1,4 @@
-# Omarchy MMA
+# Omarchy MMA Events
 
 Upcoming MMA events in the Omarchy bar. Click the glove to see what's coming up
 from the promotions you follow, then click an event for its full fight card:
@@ -42,7 +42,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 
 | Setting | Default | |
 |---|---|---|
-| `organizations` | `["ufc"]` | Promotions to follow. UFC and PFL are supported. |
+| `organizations` | `["ufc"]` | Promotions to follow. Only UFC and PFL are available for now. |
 | `eventLimit` | `10` | Events in the list, 1 to 30. |
 | `lookaheadDays` | `120` | How far ahead to look. |
 | `refreshMinutes` | `180` | Background refresh interval. |
@@ -74,8 +74,9 @@ ESPN's public JSON API. It needs no key, but it is unofficial and could change.
 - Fighter `order` 1 is the champion or higher-billed fighter and 2 is the
   challenger. ESPN lists them in no fixed order, so the plugin sorts by it.
 
-Only UFC and PFL are supported. Another promotion would need a second provider
-beside `bin/mma-api`.
+Only UFC and PFL are available at the moment. Other organizations are harder to
+parse: another promotion would need a second provider beside `bin/mma-api`.
+Suggestions for getting more of them added are welcome; please open an issue.
 
 Events are cached in `~/.cache/omarchy-mma/events.json` and shown when the source
 can't be reached.
