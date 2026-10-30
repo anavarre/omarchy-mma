@@ -17,6 +17,12 @@ Once a fight is over, the winner gets a green check, the loser is dimmed, and th
 ## Install
 
 ```sh
+omarchy plugin add https://github.com/anavarre/omarchy-mma.git --enable
+```
+
+## Manual install
+
+```sh
 git clone https://github.com/anavarre/omarchy-mma ~/.config/omarchy/plugins/anavarre.mma
 omarchy plugin validate ~/.config/omarchy/plugins/anavarre.mma
 omarchy plugin enable anavarre.mma
