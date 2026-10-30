@@ -19,7 +19,18 @@ Panel {
   property var service: null
   readonly property var mma: root.service || inertService
 
-  readonly property var events: root.mma.events
+  // Events that are over stay listed, with a check mark, for the number of days
+  // set in Settings. The clock is refreshed while the panel is open so a row
+  // leaves the list on time without waiting for a refresh.
+  property int keepFinishedDays: 1
+  property real now: Date.now()
+  Timer {
+    interval: 60000
+    repeat: true
+    running: root.opened
+    onTriggered: root.now = Date.now()
+  }
+  readonly property var events: Model.visibleEvents(root.mma.events, root.now, root.keepFinishedDays)
   readonly property bool loading: root.mma.loading === true
   readonly property bool offline: root.mma.offline === true
   readonly property string errorText: root.mma.errorText
@@ -143,6 +154,13 @@ Panel {
     root.timeZone = value
     if (root.hostWidget && typeof root.hostWidget.saveTimeZone === "function")
       root.hostWidget.saveTimeZone(value)
+  }
+
+  function pickKeepFinishedDays(value) {
+    if (value === root.keepFinishedDays) return
+    root.keepFinishedDays = value
+    if (root.hostWidget && typeof root.hostWidget.saveKeepFinishedDays === "function")
+      root.hostWidget.saveKeepFinishedDays(value)
   }
 
   function openSettings() {
@@ -391,14 +409,33 @@ Panel {
                   anchors.rightMargin: Style.space(8)
                   spacing: Style.space(2)
 
-                  Text {
+                  Item {
                     width: parent.width
-                    elide: Text.ElideRight
-                    textFormat: Text.PlainText
-                    text: row.modelData.name
-                    color: root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: root.fs(Style.font.body)
+                    height: rowName.implicitHeight
+
+                    Text {
+                      id: rowName
+                      width: Math.min(implicitWidth, parent.width - (rowDone.visible ? rowDone.implicitWidth + Style.space(6) : 0))
+                      elide: Text.ElideRight
+                      textFormat: Text.PlainText
+                      text: row.modelData.name
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: root.fs(Style.font.body)
+                    }
+                    // The event is over.
+                    Text {
+                      id: rowDone
+                      anchors.left: rowName.right
+                      anchors.leftMargin: Style.space(6)
+                      anchors.verticalCenter: rowName.verticalCenter
+                      visible: row.modelData.finished === true
+                      text: "\u2713"
+                      color: "#2ea043"
+                      font.family: root.fontFamily
+                      font.pixelSize: root.fs(Style.font.body)
+                      font.bold: true
+                    }
                   }
                   Text {
                     width: parent.width
@@ -584,6 +621,62 @@ Panel {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: root.pickTimeZone(zoneChoice.modelData.value)
+                  }
+                }
+              }
+            }
+          }
+
+          Item {
+            width: parent.width
+            height: Math.max(keepCaption.implicitHeight, keepChoices.implicitHeight) + Style.space(14)
+
+            Text {
+              id: keepCaption
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              width: parent.width - keepChoices.width - Style.space(24)
+              text: "Keep finished events"
+              elide: Text.ElideRight
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: root.fs(Style.font.body)
+            }
+
+            Row {
+              id: keepChoices
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
+
+              Repeater {
+                model: Model.keepDaysChoices
+
+                Rectangle {
+                  id: keepChoice
+                  required property int modelData
+                  readonly property bool active: root.keepFinishedDays === modelData
+                  width: keepChoiceText.implicitWidth + Style.space(20)
+                  height: keepChoiceText.implicitHeight + Style.space(10)
+                  radius: Style.space(6)
+                  color: active ? Qt.alpha(root.accent, 0.18) : "transparent"
+                  border.width: 1
+                  border.color: active ? root.accent : Qt.alpha(root.foreground, 0.25)
+
+                  Text {
+                    id: keepChoiceText
+                    anchors.centerIn: parent
+                    text: keepChoice.modelData + (keepChoice.modelData === 1 ? " day" : " days")
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: root.fs(Style.font.bodySmall)
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.pickKeepFinishedDays(keepChoice.modelData)
                   }
                 }
               }

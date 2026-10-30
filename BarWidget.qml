@@ -33,6 +33,7 @@ BarWidget {
     root.service.eventLimit = Model.clampEventLimit(root.setting("eventLimit", 10))
     root.service.lookaheadDays = Model.snapLookaheadDays(root.setting("lookaheadDays", 120))
     root.service.refreshMinutes = Model.snapRefreshMinutes(root.setting("refreshMinutes", 180))
+    root.service.keepFinishedDays = Model.knownKeepDays(root.setting("keepFinishedDays", 1))
   }
 
   function injectPanel() {
@@ -42,6 +43,7 @@ BarWidget {
     panelLoader.item.anchorItem = button
     panelLoader.item.hostWidget = root
     panelLoader.item.service = root.service
+    panelLoader.item.keepFinishedDays = Model.knownKeepDays(root.setting("keepFinishedDays", 1))
     panelLoader.item.textSize = Model.knownTextSize(root.setting("textSize", "medium"))
     panelLoader.item.timeFormat = Model.knownTimeFormat(root.setting("timeFormat", "12h"))
     panelLoader.item.timeZone = Model.knownTimeZone(root.setting("timeZone", "venue"))
@@ -60,9 +62,10 @@ BarWidget {
 
   function setOrganizations(list) { root.saveSetting("organizations", list) }
   function saveTimeZone(zone) { root.saveSetting("timeZone", Model.knownTimeZone(zone)) }
+  function saveKeepFinishedDays(days) { root.saveSetting("keepFinishedDays", Model.knownKeepDays(days)) }
   function saveTextSize(size) { root.saveSetting("textSize", Model.knownTextSize(size)) }
 
-  readonly property var nextEvent: root.service && root.service.events.length > 0 ? root.service.events[0] : null
+  readonly property var nextEvent: root.service ? Model.nextEvent(root.service.events) : null
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight

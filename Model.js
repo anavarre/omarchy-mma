@@ -15,6 +15,8 @@ var eventLimitMin = 1
 var eventLimitMax = 30
 var refreshChoices = [60, 120, 180, 360, 720, 1440]
 var lookaheadChoices = [30, 60, 90, 120, 180, 365]
+// How many days a finished event stays listed, with a check mark.
+var keepDaysChoices = [1, 3, 7]
 var textSizeValues = ["small", "medium", "large", "xlarge"]
 var timeFormats = ["12h", "24h"]
 
@@ -103,6 +105,11 @@ function snapTo(choices, value, fallback) {
 function snapRefreshMinutes(value) { return snapTo(refreshChoices, value, 180) }
 function snapLookaheadDays(value) { return snapTo(lookaheadChoices, value, 120) }
 
+function knownKeepDays(value) {
+  var n = Number(value)
+  return keepDaysChoices.indexOf(n) >= 0 ? n : 1
+}
+
 function knownTextSize(value) {
   return textSizeValues.indexOf(value) >= 0 ? value : "medium"
 }
@@ -119,9 +126,10 @@ function ymd(date) {
   return "" + date.getUTCFullYear() + pad2(date.getUTCMonth() + 1) + pad2(date.getUTCDate())
 }
 
-// The scoreboard's `dates` parameter: today through `days` days ahead.
-function dateRange(now, days) {
-  var from = new Date(now.getTime() - 24 * 3600 * 1000)
+// The scoreboard's `dates` parameter: `back` days ago (default yesterday)
+// through `days` days ahead.
+function dateRange(now, days, back) {
+  var from = new Date(now.getTime() - (back > 0 ? back : 1) * 24 * 3600 * 1000)
   var to = new Date(now.getTime() + days * 24 * 3600 * 1000)
   return ymd(from) + "-" + ymd(to)
 }
@@ -396,8 +404,9 @@ function eventUrl(e) {
   return ""
 }
 
-// Events from a scoreboard response. Past events and cancelled ones are
-// dropped; the rest are sorted by date.
+// Events from a scoreboard response. Cancelled ones are dropped; finished ones
+// are kept, flagged `finished`, for the panel to show a while (visibleEvents).
+// The rest are sorted by date.
 function parseScoreboard(text, orgId) {
   var data = typeof text === "string" ? parseJson(text) : text
   if (!data || !Array.isArray(data.events)) return []
@@ -407,7 +416,7 @@ function parseScoreboard(text, orgId) {
     if (!isObject(e)) return
     var comps = list(e.competitions).filter(isObject).slice(0, maxFightsPerEvent)
     var status = (e.status && e.status.type && e.status.type.name) || ""
-    if (status === "STATUS_FINAL" || status === "STATUS_CANCELED") return
+    if (status === "STATUS_CANCELED") return
     var fights = comps.map(fight)
     var first = comps[0] || null
     // The main event is the last fight the scoreboard lists.
@@ -423,6 +432,7 @@ function parseScoreboard(text, orgId) {
       name: String(e.name || e.shortName || ""),
       shortName: String(e.shortName || e.name || ""),
       date: String(e.date || ""),
+      finished: status === "STATUS_FINAL",
       venue: venueText(venue),
       tz: zoneForAddress(venue && venue.address),
       broadcast: broadcastText(first),
@@ -442,11 +452,37 @@ function sortEvents(events) {
   })
 }
 
-// Several organizations' events merged into one date-ordered, limited list.
-function mergeEvents(lists, limit) {
+// ESPN gives no end time, so a card is taken to be over this long after it
+// started (a main card runs about five hours).
+var eventLengthMs = 6 * 3600 * 1000
+
+// Whether an event is over, and was over less than `days` days ago.
+function recentlyFinished(e, now, days) {
+  if (!e || e.finished !== true) return false
+  var over = new Date(e.date).getTime() + eventLengthMs
+  return isFinite(over) && Number(now) - over < knownKeepDays(days) * 86400000
+}
+
+// What the list shows, in date order: every unfinished event, and finished
+// ones for `days` days after they ended.
+function visibleEvents(events, now, days) {
+  return sortEvents(events.filter(function(e) {
+    return e.finished !== true || recentlyFinished(e, now, days)
+  }))
+}
+
+// The soonest event still to come, if any.
+function nextEvent(events) {
+  for (var i = 0; i < events.length; i++) if (events[i].finished !== true) return events[i]
+  return null
+}
+
+// Several organizations' events merged into one list, limited. Finished events
+// older than `days` are left out first, so they never use up the limit.
+function mergeEvents(lists, limit, now, days) {
   var all = []
   lists.forEach(function(l) { all = all.concat(l) })
-  return sortEvents(all).slice(0, clampEventLimit(limit))
+  return visibleEvents(all, now === undefined ? Date.now() : now, days).slice(0, clampEventLimit(limit))
 }
 
 // Title fights carry a "types" entry such as "UFC Heavyweight Title". There is
@@ -656,6 +692,7 @@ function sanitizeEvent(e) {
     name: str(e.name),
     shortName: str(e.shortName) || str(e.name),
     date: str(e.date),
+    finished: e.finished === true,
     venue: str(e.venue),
     tz: knownEventZone(e.tz),
     broadcast: str(e.broadcast),
@@ -677,10 +714,14 @@ function sanitizeEvents(events) {
 }
 
 // Events cached before they started are still worth showing offline; ones
-// that began more than half a day ago are not.
-function upcomingOnly(events, now) {
+// that began more than half a day ago are not, unless they are finished ones
+// still inside their `days` window.
+function upcomingOnly(events, now, days) {
   var cutoff = now.getTime() - 12 * 3600 * 1000
-  return events.filter(function(e) { return new Date(e.date).getTime() >= cutoff })
+  return events.filter(function(e) {
+    if (e.finished === true) return recentlyFinished(e, now.getTime(), days)
+    return new Date(e.date).getTime() >= cutoff
+  })
 }
 
 // Events whose promotion is one of the selected ones.

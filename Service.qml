@@ -25,6 +25,7 @@ Item {
   property int eventLimit: 10
   property int lookaheadDays: 120
   property int refreshMinutes: 180
+  property int keepFinishedDays: 1
 
   property bool loading: false
   property string errorText: ""
@@ -49,6 +50,7 @@ Item {
 
   onOrganizationsChanged: if (root.organizations !== null) refreshSoon()
   onLookaheadDaysChanged: refreshSoon()
+  onKeepFinishedDaysChanged: refreshSoon()
   onEventLimitChanged: root.merge()
   onRefreshMinutesChanged: timer.restart()
 
@@ -84,7 +86,7 @@ Item {
     eventsProcess.org = org
     eventsProcess.generation = root.generation
     eventsProcess.command = ["/usr/bin/bash", root.api, "events", promo.slug,
-      Model.dateRange(new Date(), Model.snapLookaheadDays(root.lookaheadDays))]
+      Model.dateRange(new Date(), Model.snapLookaheadDays(root.lookaheadDays), root.keepFinishedDays + 1)]
     eventsProcess.running = true
   }
 
@@ -106,7 +108,8 @@ Item {
     root.saveCache()
     // The crown and the segments only come from the card fetch, so start the
     // soonest event's now rather than when the panel opens.
-    if (root.events.length > 0) root.loadCard(root.events[0].id)
+    var next = Model.nextEvent(root.events)
+    if (next) root.loadCard(next.id)
   }
 
   function merge() {
@@ -117,7 +120,7 @@ Item {
     var lists = []
     for (var i = 0; i < selected.length; i++)
       if (root.byOrg[selected[i]]) lists.push(root.byOrg[selected[i]])
-    root.events = Model.mergeEvents(lists, root.eventLimit)
+    root.events = Model.mergeEvents(lists, root.eventLimit, Date.now(), root.keepFinishedDays)
   }
 
   function eventById(id) {
@@ -261,7 +264,7 @@ Item {
     onLoaded: {
       var cached = Model.parseCache(text())
       if (!cached || root.events.length > 0) return
-      root.events = Model.forOrganizations(Model.upcomingOnly(cached.events, new Date()),
+      root.events = Model.forOrganizations(Model.upcomingOnly(cached.events, new Date(), root.keepFinishedDays),
         Model.selectedOrganizations(root.organizations))
       root.fetchedAt = cached.fetchedAt
       // A fetch that already failed before the cache was read.

@@ -166,11 +166,31 @@ test("parseScoreboard returns date-ordered events with metadata", () => {
   assert.strictEqual(M.headlinerText(e), "C. Gane vs J. Hokit");
 });
 
-test("parseScoreboard tolerates garbage and drops finished events", () => {
+test("parseScoreboard tolerates garbage and flags finished events", () => {
   assert.deepStrictEqual(M.parseScoreboard("not json", "ufc"), []);
   assert.deepStrictEqual(M.parseScoreboard("{}", "ufc"), []);
   const done = { events: [{ id: "1", name: "Old", date: "2020-01-01T00:00Z", status: { type: { name: "STATUS_FINAL" } }, competitions: [] }] };
+  assert.strictEqual(M.parseScoreboard(done, "ufc")[0].finished, true);
+  done.events[0].status.type.name = "STATUS_CANCELED";
   assert.deepStrictEqual(M.parseScoreboard(done, "ufc"), []);
+});
+
+test("knownKeepDays only accepts 1, 3 or 7", () => {
+  assert.strictEqual(M.knownKeepDays(7), 7);
+  assert.strictEqual(M.knownKeepDays("3"), 3);
+  assert.strictEqual(M.knownKeepDays(5), 1);
+});
+
+test("visibleEvents keeps finished events for the chosen days, in date order", () => {
+  const now = Date.parse("2026-11-10T12:00:00Z");
+  const ev = (id, date, finished) => ({ id, date, finished });
+  const list = [ev("a", "2026-11-09T22:00:00Z", true), ev("b", "2026-11-05T22:00:00Z", true), ev("c", "2026-11-20T22:00:00Z", false)];
+  const ids = (days) => M.visibleEvents(list, now, days).map((e) => e.id);
+  assert.deepStrictEqual(ids(1), ["a", "c"]);
+  assert.deepStrictEqual(ids(3), ["a", "c"]);
+  assert.deepStrictEqual(ids(7), ["b", "a", "c"]);
+  assert.strictEqual(M.nextEvent(M.visibleEvents(list, now, 7)).id, "c");
+  assert.strictEqual(M.nextEvent([ev("a", "x", true)]), null);
 });
 
 test("the challenger is always on the right, whatever order ESPN lists them in", () => {
