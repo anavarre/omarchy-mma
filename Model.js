@@ -512,17 +512,32 @@ function parseSegments(text) {
   var data = typeof text === "string" ? parseJson(text) : text
   var map = ({})
   if (!Array.isArray(data)) return map
+  var methods = ({})
   data.forEach(function(c) {
+    // A fight's status object: how it was won. It carries no id, only a $ref.
+    var m = isObject(c) && isObject(c.result) ? /\/competitions\/(\d+)\/status/.exec(String(c["$ref"] || "")) : null
+    if (m) methods[m[1]] = methodLabel(c.result)
     if (!isObject(c) || c.id === undefined) return
     var seg = isObject(c.cardSegment) ? c.cardSegment : {}
     map[String(c.id)] = {
       segment: String(seg.name || ""),
       label: String(seg.description || ""),
       matchNumber: Number(c.matchNumber) || 0,
-      champion: isChampionFight(c)
+      champion: isChampionFight(c),
+      method: ""
     }
   })
+  for (var id in methods) if (map[id]) map[id].method = methods[id]
   return map
+}
+
+// "KO/TKO (Punch)", "Unanimous Decision", "Submission (Rear Naked Choke)".
+function methodLabel(result) {
+  var name = str(result.displayName)
+  var decision = /^Decision\s*-\s*(.+)$/i.exec(name)
+  if (decision) return decision[1] + " Decision"
+  var how = str(result.description)
+  return how && how !== name ? name + " (" + how + ")" : name
 }
 
 // ------------------------------------------------------------------- cards
@@ -550,6 +565,7 @@ function buildCard(event, segments) {
     copy.matchNumber = s ? s.matchNumber : 0
     copy.champion = s ? s.champion : false
     copy.segmentLabel = s ? s.label : ""
+    copy.method = s ? s.method : ""
     return copy
   })
   var known = fights.some(function(f) { return f.segment !== "" })

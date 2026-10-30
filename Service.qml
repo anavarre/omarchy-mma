@@ -152,7 +152,8 @@ Item {
     if (cardProcess.running || root.cardQueue.length === 0) return
     var job = root.cardQueue.shift()
     cardProcess.job = job
-    var ids = job.event.fights.map(function(f) { return f.id })
+    // A "+" asks mma-api for how a finished fight was won.
+    var ids = job.event.fights.map(function(f) { return f.done ? f.id + "+" : f.id })
     cardProcess.command = ["/usr/bin/bash", root.api, "card", job.event.slug, job.event.id].concat(ids)
     cardProcess.running = true
   }

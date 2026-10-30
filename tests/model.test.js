@@ -479,3 +479,27 @@ test("finished fights name a winner and show how long they lasted", () => {
   assert.strictEqual(M.resultLabel(back), "R3 3:26");
   assert.strictEqual(M.outcome(back, 0), "win");
 });
+
+test("the card says how a finished fight was won", () => {
+  const status = (id, result) => ({ "$ref": `http://x/events/1/competitions/${id}/status?lang=en`, period: 3, result });
+  const seg = M.parseSegments(JSON.stringify([
+    status("1", { displayName: "KO/TKO", description: "Punch" }),
+    { id: "1", cardSegment: { name: "main" }, matchNumber: 1 },
+    { id: "2", cardSegment: { name: "main" }, matchNumber: 2 },
+    { id: "3", cardSegment: { name: "main" }, matchNumber: 3 },
+    status("2", { displayName: "Decision - Split", shortDisplayName: "S Dec" }),
+    status("3", { displayName: "Submission", description: "Rear Naked Choke" }),
+    status("99", { displayName: "KO/TKO" }),
+  ]));
+  assert.strictEqual(seg["1"].method, "KO/TKO (Punch)");
+  assert.strictEqual(seg["2"].method, "Split Decision");
+  assert.strictEqual(seg["3"].method, "Submission (Rear Naked Choke)");
+  assert.strictEqual(seg["99"], undefined);
+
+  const fight = { id: "1", done: true, round: 3, clock: "3:26", fighters: [{}, {}] };
+  const card = M.buildCard({ fights: [fight] }, seg);
+  assert.strictEqual(M.resultLabel(card[0].fights[0]), "R3 3:26 KO/TKO (Punch)");
+  assert.strictEqual(M.resultLabel(M.buildCard({ fights: [fight] }, {})[0].fights[0]), "R3 3:26");
+  assert.strictEqual(M.resultLabel({ done: true, round: 5, clock: "5:00", method: "Unanimous Decision" }), "Unanimous Decision");
+  assert.strictEqual(M.resultLabel({ done: true, round: 3, clock: "5:00", method: "Split Decision" }), "Split Decision");
+});

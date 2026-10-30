@@ -7,6 +7,8 @@
 #   mma-api card <league> <eventId> <competitionId>...
 #       A JSON array with one core-API competition per id. This is where the
 #       card segment (main, prelims1, prelims2) lives; the scoreboard has none.
+#       An id written with a trailing "+" (finished fight) also adds that
+#       fight's status object, which names how it was won (KO, decision...).
 #
 # MMA_SITE_BASE and MMA_CORE_BASE override the endpoints for running the
 # script by hand. They must be https: curl refuses every other scheme, and
@@ -51,13 +53,18 @@ case "$cmd" in
     tmp=$(mktemp -d) || exit 1
     trap 'rm -rf "$tmp"' EXIT
     n=0
-    for id in "$@"; do
+    for arg in "$@"; do
+      id=${arg%+}
       [[ $id =~ ^[0-9]+$ ]] || continue
       [ "$n" -lt "$MAX_FIGHTS" ] || break
       n=$((n + 1))
       # A failed or oversized fetch leaves no file, so it is skipped below.
       { fetch "$CORE_BASE/$league/events/$event/competitions/$id?lang=en" > "$tmp/$n.json" 2> /dev/null \
           || rm -f "$tmp/$n.json"; } &
+      if [ "$id" != "$arg" ]; then
+        { fetch "$CORE_BASE/$league/events/$event/competitions/$id/status?lang=en" > "$tmp/$n.s.json" 2> /dev/null \
+            || rm -f "$tmp/$n.s.json"; } &
+      fi
       # Throttle: wait for the batch to finish before starting the next.
       if [ $((n % PARALLEL)) -eq 0 ]; then wait; fi
     done
@@ -65,10 +72,12 @@ case "$cmd" in
     printf '['
     sep=""
     for ((i = 1; i <= n; i++)); do
-      [ -s "$tmp/$i.json" ] || continue
-      printf '%s' "$sep"
-      cat "$tmp/$i.json"
-      sep=","
+      for f in "$tmp/$i.json" "$tmp/$i.s.json"; do
+        [ -s "$f" ] || continue
+        printf '%s' "$sep"
+        cat "$f"
+        sep=","
+      done
     done
     printf ']'
     ;;
