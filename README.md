@@ -54,7 +54,8 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 
 - Click the glove: the event list, each event with its promotion's logo. Middle-click: refresh.
 - `s` opens the settings view: tick the organizations to follow (UFC on, PFL off by default).
-  Space or Enter toggles, `Esc` goes back. The choice is saved to `shell.json`.
+  `↑`/`↓` move through every setting (organizations, time zone, keep days, text size);
+  Space or Enter toggles an organization, `←`/`→` change the other settings, `Esc` goes back. The choice is saved to `shell.json`.
 - `↑`/`↓` move, `Enter` (or click) opens the card, `o` opens the event in your browser,
   `r` refreshes, `Esc` goes back, then closes.
 - On a card, `↑`/`↓` scroll and `←` goes back.

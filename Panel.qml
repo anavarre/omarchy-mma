@@ -156,11 +156,35 @@ Panel {
       root.hostWidget.saveTimeZone(value)
   }
 
+  readonly property int keepDaysIndex: Math.max(0, Model.keepDaysChoices.indexOf(root.keepFinishedDays))
+
+  function stepTimeZone(delta) {
+    root.pickTimeZone(delta < 0 ? "venue" : "local")
+  }
+
+  function stepKeepDays(delta) {
+    var i = Math.max(0, Math.min(Model.keepDaysChoices.length - 1, root.keepDaysIndex + delta))
+    root.pickKeepFinishedDays(Model.keepDaysChoices[i])
+  }
+
   function pickKeepFinishedDays(value) {
     if (value === root.keepFinishedDays) return
     root.keepFinishedDays = value
     if (root.hostWidget && typeof root.hostWidget.saveKeepFinishedDays === "function")
       root.hostWidget.saveKeepFinishedDays(value)
+  }
+
+  // Settings rows: one per organization, then the time zone, keep-days and
+  // text size steppers.
+  readonly property int settingsRowCount: root.promotions.length + 3
+  readonly property int zoneRow: root.promotions.length
+  readonly property int keepRow: root.promotions.length + 1
+  readonly property int sizeRow: root.promotions.length + 2
+
+  function stepSettingsRow(dx) {
+    if (root.settingsSelected === root.zoneRow) root.stepTimeZone(dx)
+    else if (root.settingsSelected === root.keepRow) root.stepKeepDays(dx)
+    else if (root.settingsSelected === root.sizeRow) root.stepTextSize(dx)
   }
 
   function openSettings() {
@@ -233,7 +257,8 @@ Panel {
       anchors.fill: parent
       onMoveRequested: function(dx, dy) {
         if (root.showSettings) {
-          if (dy !== 0) root.settingsSelected = Math.max(0, Math.min(root.promotions.length - 1, root.settingsSelected + dy))
+          if (dy !== 0) root.settingsSelected = Math.max(0, Math.min(root.settingsRowCount - 1, root.settingsSelected + dy))
+          else if (root.settingsSelected >= root.promotions.length) root.stepSettingsRow(dx)
           else if (dx < 0) root.showSettings = false
         }
         else if (root.showCard) {
@@ -573,14 +598,21 @@ Panel {
           // "System" the computer's own.
           Item {
             width: parent.width
-            height: timeZoneChoices.implicitHeight + Style.space(14)
+            height: Math.max(timeZoneCaption.implicitHeight, timeZoneControls.implicitHeight) + Style.space(14)
+
+            Rectangle {
+              anchors.fill: parent
+              radius: Style.space(6)
+              color: root.settingsSelected === root.zoneRow ? Qt.alpha(root.accent, 0.18) : "transparent"
+            }
+            HoverHandler { onHoveredChanged: if (hovered) root.settingsSelected = root.zoneRow }
 
             Text {
               id: timeZoneCaption
               anchors.left: parent.left
               anchors.leftMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
-              width: parent.width - timeZoneChoices.width - Style.space(24)
+              width: parent.width - timeZoneControls.width - Style.space(16)
               text: "Time zone"
               elide: Text.ElideRight
               color: root.foreground
@@ -589,54 +621,65 @@ Panel {
             }
 
             Row {
-              id: timeZoneChoices
+              id: timeZoneControls
               anchors.right: parent.right
               anchors.rightMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(6)
+              spacing: Style.space(8)
 
-              Repeater {
-                model: [{ value: "venue", label: "Event location" }, { value: "local", label: "System" }]
+              PanelActionButton {
+                anchors.verticalCenter: parent.verticalCenter
+                // nf-fa-angle_left (U+F104)
+                iconText: "\uf104"
+                tooltipText: "Event location"
+                enabled: root.timeZone !== "venue"
+                foreground: root.foreground
+                hoverColor: root.foreground
+                fontSize: root.fs(Style.font.bodySmall)
+                onClicked: root.stepTimeZone(-1)
+              }
 
-                Rectangle {
-                  id: zoneChoice
-                  required property var modelData
-                  readonly property bool active: root.timeZone === modelData.value
-                  width: choiceText.implicitWidth + Style.space(20)
-                  height: choiceText.implicitHeight + Style.space(10)
-                  radius: Style.space(6)
-                  color: active ? Qt.alpha(root.accent, 0.18) : "transparent"
-                  border.width: 1
-                  border.color: active ? root.accent : Qt.alpha(root.foreground, 0.25)
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(Math.round(130 * root.textScale))
+                horizontalAlignment: Text.AlignHCenter
+                text: root.timeZone === "venue" ? "Event location" : "System"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: root.fs(Style.font.body)
+              }
 
-                  Text {
-                    id: choiceText
-                    anchors.centerIn: parent
-                    text: zoneChoice.modelData.label
-                    color: root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: root.fs(Style.font.bodySmall)
-                  }
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.pickTimeZone(zoneChoice.modelData.value)
-                  }
-                }
+              PanelActionButton {
+                anchors.verticalCenter: parent.verticalCenter
+                // nf-fa-angle_right (U+F105)
+                iconText: "\uf105"
+                tooltipText: "System"
+                enabled: root.timeZone !== "local"
+                foreground: root.foreground
+                hoverColor: root.foreground
+                fontSize: root.fs(Style.font.bodySmall)
+                onClicked: root.stepTimeZone(1)
               }
             }
           }
 
           Item {
             width: parent.width
-            height: Math.max(keepCaption.implicitHeight, keepChoices.implicitHeight) + Style.space(14)
+            height: Math.max(keepCaption.implicitHeight, keepControls.implicitHeight) + Style.space(14)
+
+            Rectangle {
+              anchors.fill: parent
+              radius: Style.space(6)
+              color: root.settingsSelected === root.keepRow ? Qt.alpha(root.accent, 0.18) : "transparent"
+            }
+            HoverHandler { onHoveredChanged: if (hovered) root.settingsSelected = root.keepRow }
 
             Text {
               id: keepCaption
               anchors.left: parent.left
               anchors.leftMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
-              width: parent.width - keepChoices.width - Style.space(24)
+              width: parent.width - keepControls.width - Style.space(16)
               text: "Keep finished events"
               elide: Text.ElideRight
               color: root.foreground
@@ -645,40 +688,44 @@ Panel {
             }
 
             Row {
-              id: keepChoices
+              id: keepControls
               anchors.right: parent.right
               anchors.rightMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(6)
+              spacing: Style.space(8)
 
-              Repeater {
-                model: Model.keepDaysChoices
+              PanelActionButton {
+                anchors.verticalCenter: parent.verticalCenter
+                // nf-fa-angle_left (U+F104)
+                iconText: "\uf104"
+                tooltipText: "Fewer days"
+                enabled: root.keepDaysIndex > 0
+                foreground: root.foreground
+                hoverColor: root.foreground
+                fontSize: root.fs(Style.font.bodySmall)
+                onClicked: root.stepKeepDays(-1)
+              }
 
-                Rectangle {
-                  id: keepChoice
-                  required property int modelData
-                  readonly property bool active: root.keepFinishedDays === modelData
-                  width: keepChoiceText.implicitWidth + Style.space(20)
-                  height: keepChoiceText.implicitHeight + Style.space(10)
-                  radius: Style.space(6)
-                  color: active ? Qt.alpha(root.accent, 0.18) : "transparent"
-                  border.width: 1
-                  border.color: active ? root.accent : Qt.alpha(root.foreground, 0.25)
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(Math.round(70 * root.textScale))
+                horizontalAlignment: Text.AlignHCenter
+                text: root.keepFinishedDays + (root.keepFinishedDays === 1 ? " day" : " days")
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: root.fs(Style.font.body)
+              }
 
-                  Text {
-                    id: keepChoiceText
-                    anchors.centerIn: parent
-                    text: keepChoice.modelData + (keepChoice.modelData === 1 ? " day" : " days")
-                    color: root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: root.fs(Style.font.bodySmall)
-                  }
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.pickKeepFinishedDays(keepChoice.modelData)
-                  }
-                }
+              PanelActionButton {
+                anchors.verticalCenter: parent.verticalCenter
+                // nf-fa-angle_right (U+F105)
+                iconText: "\uf105"
+                tooltipText: "More days"
+                enabled: root.keepDaysIndex < Model.keepDaysChoices.length - 1
+                foreground: root.foreground
+                hoverColor: root.foreground
+                fontSize: root.fs(Style.font.bodySmall)
+                onClicked: root.stepKeepDays(1)
               }
             }
           }
@@ -688,6 +735,13 @@ Panel {
           Item {
             width: parent.width
             height: Math.max(textSizeCaption.implicitHeight, textSizeControls.implicitHeight) + Style.space(14)
+
+            Rectangle {
+              anchors.fill: parent
+              radius: Style.space(6)
+              color: root.settingsSelected === root.sizeRow ? Qt.alpha(root.accent, 0.18) : "transparent"
+            }
+            HoverHandler { onHoveredChanged: if (hovered) root.settingsSelected = root.sizeRow }
 
             Text {
               id: textSizeCaption
