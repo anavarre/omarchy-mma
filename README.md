@@ -4,6 +4,8 @@ Upcoming MMA events in the Omarchy bar. Click the glove to see what's coming up
 from the promotions you follow, then click an event for its full fight card:
 main card first, prelims after, with the challenger always on the right.
 
+![Omarchy MMA preview](preview.png)
+
 ## Requirements
 
 - Omarchy with the Quickshell-based shell (`omarchy-shell`)
@@ -20,6 +22,19 @@ omarchy plugin enable anavarre.mma
 omarchy-shell shell rescanPlugins
 ```
 
+## Uninstall
+
+```sh
+omarchy plugin disable anavarre.mma
+omarchy plugin remove anavarre.mma
+omarchy-shell shell rescanPlugins
+rm -rf ~/.cache/omarchy-mma
+```
+
+If you installed by hand, delete `~/.config/omarchy/plugins/anavarre.mma` instead of
+running `omarchy plugin remove`. Also remove any leftover `anavarre.mma` entry from
+`~/.config/omarchy/shell.json`.
+
 ## Settings
 
 Open the widget's settings in the Omarchy shell (or edit its entry in
@@ -27,11 +42,12 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 
 | Setting | Default | |
 |---|---|---|
-| `organizations` | `["ufc"]` | Promotions to follow. UFC and PFL work today; KSW, ONE, Bellator, RIZIN, Cage Warriors, OKTAGON and BKFC are listed as coming soon. |
+| `organizations` | `["ufc"]` | Promotions to follow. UFC and PFL are supported. |
 | `eventLimit` | `10` | Events in the list, 1 to 30. |
 | `lookaheadDays` | `120` | How far ahead to look. |
 | `refreshMinutes` | `180` | Background refresh interval. |
-| `timeFormat` | `12h` | `12h` or `24h`. Times are in your local time zone. |
+| `timeFormat` | `12h` | `12h` or `24h`. |
+| `timeZone` | `venue` | Time zone for event times: `venue` (each event's own location, worked out from its venue address) or `local` (this computer's). Also set from the panel's settings, above the text size. |
 | `textSize` | `medium` | `small`, `medium`, `large` or `xlarge`. |
 
 ## Using it
@@ -58,9 +74,8 @@ ESPN's public JSON API. It needs no key, but it is unofficial and could change.
 - Fighter `order` 1 is the champion or higher-billed fighter and 2 is the
   challenger. ESPN lists them in no fixed order, so the plugin sorts by it.
 
-ESPN returns nothing for KSW, Bellator, RIZIN and Cage Warriors and doesn't
-cover ONE, which is why those are not selectable yet. A second provider would
-slot in beside `bin/mma-api`.
+Only UFC and PFL are supported. Another promotion would need a second provider
+beside `bin/mma-api`.
 
 Events are cached in `~/.cache/omarchy-mma/events.json` and shown when the source
 can't be reached.
@@ -73,3 +88,7 @@ tests/run
 
 Runs `Model.js` against saved ESPN responses in `tests/fixtures/` and checks
 `bin/mma-api`'s argument handling. No network or display needed.
+
+## License
+
+MIT. See [LICENSE.md](LICENSE.md).

@@ -23,7 +23,7 @@ Panel {
   readonly property bool loading: root.mma.loading === true
   readonly property bool offline: root.mma.offline === true
   readonly property string errorText: root.mma.errorText
-  readonly property int organizationCount: root.mma.organizations.length
+  readonly property int organizationCount: (root.mma.organizations || []).length
 
   property int selected: 0
   // The settings view replaces the list and the card while it is showing.
@@ -49,6 +49,7 @@ Panel {
   // scaled by the matching factor.
   property string textSize: "medium"
   property string timeFormat: "12h"
+  property string timeZone: "venue"
   readonly property var textScales: ({ small: 0.85, medium: 1.0, large: 1.2, xlarge: 1.45 })
   readonly property real textScale: root.textScales[root.textSize] || 1.0
 
@@ -103,12 +104,45 @@ Panel {
     root.mma.loadCard(e.id)
   }
 
-  function organizationOn(id) { return root.mma.organizations.indexOf(id) >= 0 }
+  function organizationOn(id) { return (root.mma.organizations || []).indexOf(id) >= 0 }
 
   function toggleOrganization(index) {
     var p = root.promotions[index]
     if (!p || !p.enabled || !root.hostWidget) return
-    root.hostWidget.setOrganizations(Model.toggleOrganization(root.mma.organizations, p.id, !root.organizationOn(p.id)))
+    root.hostWidget.setOrganizations(Model.toggleOrganization(root.mma.organizations || [], p.id, !root.organizationOn(p.id)))
+  }
+
+  readonly property var textSizeChoices: [
+    { value: "small", label: "Small" },
+    { value: "medium", label: "Medium" },
+    { value: "large", label: "Large" },
+    { value: "xlarge", label: "Extra large" }
+  ]
+  readonly property int textSizeIndex: {
+    for (var i = 0; i < root.textSizeChoices.length; i++)
+      if (root.textSizeChoices[i].value === root.textSize) return i
+    return 1
+  }
+  readonly property string textSizeLabel: root.textSizeChoices[root.textSizeIndex].label
+
+  // Applied locally first so the panel redraws at the new size on the click;
+  // the shell.json write comes back as the same value.
+  function stepTextSize(delta) {
+    var i = Math.max(0, Math.min(root.textSizeChoices.length - 1, root.textSizeIndex + delta))
+    var next = root.textSizeChoices[i].value
+    if (next === root.textSize) return
+    root.textSize = next
+    if (root.hostWidget && typeof root.hostWidget.saveTextSize === "function")
+      root.hostWidget.saveTextSize(next)
+  }
+
+  // Applied locally first so the times redraw on the pick; the shell.json
+  // write comes back as the same value.
+  function pickTimeZone(value) {
+    if (value === root.timeZone) return
+    root.timeZone = value
+    if (root.hostWidget && typeof root.hostWidget.saveTimeZone === "function")
+      root.hostWidget.saveTimeZone(value)
   }
 
   function openSettings() {
@@ -136,24 +170,30 @@ Panel {
 
   onSelectedChanged: root.revealSelected()
 
-  function whenText(iso) {
-    return Model.formatDay(iso) + " · " + Model.formatTime(iso, root.timeFormat)
+  // The zone an event's times are shown in: the chosen one, or its venue's.
+  function zoneFor(e) { return Model.effectiveZone(root.timeZone, e) }
+
+  function whenText(e) {
+    var zone = root.zoneFor(e)
+    return Model.formatDay(e.date, zone) + " · " + Model.formatTime(e.date, root.timeFormat, zone)
   }
 
   // A section's start time. When it falls on another day than the event's
   // (a late main card seen from a time zone ahead of the venue's), the weekday
   // comes first so "3:00 AM" isn't read as the same night.
   function sectionTime(iso) {
-    var time = Model.formatTime(iso, root.timeFormat)
-    if (time === "" || !root.currentEvent) return time
-    var day = Model.formatDay(iso)
-    return day !== Model.formatDay(root.currentEvent.date) ? day.split(",")[0] + " " + time : time
+    if (!root.currentEvent) return Model.formatTime(iso, root.timeFormat, root.timeZone)
+    var zone = root.zoneFor(root.currentEvent)
+    var time = Model.formatTime(iso, root.timeFormat, zone)
+    if (time === "") return time
+    var day = Model.formatDay(iso, zone)
+    return day !== Model.formatDay(root.currentEvent.date, zone) ? day.split(",")[0] + " " + time : time
   }
 
   // A short line for the list row: date, time and how far off it is.
   function eventWhen(e) {
-    var rel = Model.relativeDay(e.date, new Date())
-    return root.whenText(e.date) + (rel !== "" ? " · " + rel : "")
+    var rel = Model.relativeDay(e.date, new Date(), root.zoneFor(e))
+    return root.whenText(e) + (rel !== "" ? " · " + rel : "")
   }
 
   function eventWhere(e) {
@@ -198,6 +238,7 @@ Panel {
       onTextKey: function(text) {
         if (root.showSettings) {
           if (text === " ") root.toggleOrganization(root.settingsSelected)
+          else if (text === "t") root.pickTimeZone(root.timeZone === "venue" ? "local" : "venue")
         }
         else if (text === "s") root.openSettings()
         else if (text === "r") root.mma.refresh()
@@ -238,7 +279,7 @@ Panel {
             font.pixelSize: root.fs(Style.font.bodySmall)
             text: root.showSettings ? "Organizations to show events for"
               : root.showCard && root.currentEvent
-              ? [root.whenText(root.currentEvent.date), root.eventWhere(root.currentEvent)]
+              ? [root.whenText(root.currentEvent), root.eventWhere(root.currentEvent)]
                 .filter(function(s) { return s !== "" }).join(" · ")
               : ""
           }
@@ -332,6 +373,7 @@ Panel {
                       id: tagText
                       anchors.centerIn: parent
                       text: row.modelData.orgLabel
+                      textFormat: Text.PlainText
                       color: root.foreground
                       font.family: root.fontFamily
                       font.pixelSize: root.fs(Style.font.bodySmall)
@@ -486,6 +528,126 @@ Panel {
                 cursorShape: orgRow.modelData.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                 onEntered: root.settingsSelected = orgRow.index
                 onClicked: root.toggleOrganization(orgRow.index)
+              }
+            }
+          }
+
+          // Event times follow this zone: "Event location" uses each venue's,
+          // "System" the computer's own.
+          Item {
+            width: parent.width
+            height: timeZoneChoices.implicitHeight + Style.space(14)
+
+            Text {
+              id: timeZoneCaption
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              width: parent.width - timeZoneChoices.width - Style.space(24)
+              text: "Time zone"
+              elide: Text.ElideRight
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: root.fs(Style.font.body)
+            }
+
+            Row {
+              id: timeZoneChoices
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
+
+              Repeater {
+                model: [{ value: "venue", label: "Event location" }, { value: "local", label: "System" }]
+
+                Rectangle {
+                  id: zoneChoice
+                  required property var modelData
+                  readonly property bool active: root.timeZone === modelData.value
+                  width: choiceText.implicitWidth + Style.space(20)
+                  height: choiceText.implicitHeight + Style.space(10)
+                  radius: Style.space(6)
+                  color: active ? Qt.alpha(root.accent, 0.18) : "transparent"
+                  border.width: 1
+                  border.color: active ? root.accent : Qt.alpha(root.foreground, 0.25)
+
+                  Text {
+                    id: choiceText
+                    anchors.centerIn: parent
+                    text: zoneChoice.modelData.label
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: root.fs(Style.font.bodySmall)
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.pickTimeZone(zoneChoice.modelData.value)
+                  }
+                }
+              }
+            }
+          }
+
+          // Same minus/plus control as miniflux; the panel redraws at the
+          // chosen size as soon as it is picked.
+          Item {
+            width: parent.width
+            height: Math.max(textSizeCaption.implicitHeight, textSizeControls.implicitHeight) + Style.space(14)
+
+            Text {
+              id: textSizeCaption
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              width: parent.width - textSizeControls.width - Style.space(16)
+              text: "Text size"
+              elide: Text.ElideRight
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: root.fs(Style.font.body)
+            }
+
+            Row {
+              id: textSizeControls
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(8)
+
+              PanelActionButton {
+                anchors.verticalCenter: parent.verticalCenter
+                // nf-fa-minus (U+F068)
+                iconText: "\uf068"
+                tooltipText: "Smaller"
+                enabled: root.textSizeIndex > 0
+                foreground: root.foreground
+                hoverColor: root.foreground
+                fontSize: root.fs(Style.font.bodySmall)
+                onClicked: root.stepTextSize(-1)
+              }
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(Math.round(80 * root.textScale))
+                horizontalAlignment: Text.AlignHCenter
+                text: root.textSizeLabel
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: root.fs(Style.font.body)
+              }
+
+              PanelActionButton {
+                anchors.verticalCenter: parent.verticalCenter
+                // nf-fa-plus (U+F067)
+                iconText: "\uf067"
+                tooltipText: "Larger"
+                enabled: root.textSizeIndex < root.textSizeChoices.length - 1
+                foreground: root.foreground
+                hoverColor: root.foreground
+                fontSize: root.fs(Style.font.bodySmall)
+                onClicked: root.stepTextSize(1)
               }
             }
           }
@@ -659,7 +821,7 @@ Panel {
                         elide: Text.ElideRight
                         textFormat: Text.PlainText
                         visible: text !== ""
-                        text: [Model.isMainEvent(section.modelData, bout.index) ? "Main event" : "",
+                        text: Model.crownFor(bout.modelData) + [Model.isMainEvent(section.modelData, bout.index) ? "Main event" : "",
                           Model.weightClassLabel(bout.modelData)].filter(function(s) { return s !== "" }).join(" · ")
                         color: root.dim
                         font.family: root.fontFamily

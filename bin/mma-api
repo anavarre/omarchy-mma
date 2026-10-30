@@ -7,13 +7,22 @@
 #   mma-api card <league> <eventId> <competitionId>...
 #       A JSON array with one core-API competition per id. This is where the
 #       card segment (main, prelims1, prelims2) lives; the scoreboard has none.
+#
+# MMA_SITE_BASE and MMA_CORE_BASE override the endpoints for running the
+# script by hand. They must be https: curl refuses every other scheme, and
+# Service.qml does not pass them through from the shell's environment.
 set -u
 
 SITE_BASE=${MMA_SITE_BASE:-https://site.api.espn.com/apis/site/v2/sports/mma}
 CORE_BASE=${MMA_CORE_BASE:-https://sports.core.api.espn.com/v2/sports/mma/leagues}
-PARALLEL=8
+PARALLEL=16
+# ESPN's largest answer is well under 1 MB; refuse anything far beyond that.
+MAX_BYTES=8388608
 
-fetch() { curl -fsS --max-time 20 --retry 1 -A "omarchy-mma" "$1"; }
+fetch() {
+  curl -fsS --proto '=https' --max-filesize "$MAX_BYTES" --max-time 20 --retry 1 \
+    -A "omarchy-mma" "$1"
+}
 die() { echo "mma-api: $*" >&2; exit 2; }
 
 cmd=${1:-}

@@ -34,6 +34,7 @@
       "lookaheadDays": 120,
       "refreshMinutes": 180,
       "timeFormat": "12h",
+      "timeZone": "venue",
       "textSize": "medium"
     },
     "schema": [
@@ -41,7 +42,7 @@
         "key": "organizations",
         "type": "multiselect",
         "label": "Organizations",
-        "description": "Which promotions to show events for. UFC and PFL are available today; the rest are coming soon.",
+        "description": "Which promotions to show events for. UFC and PFL are available.",
         "noSelectionText": "None selected",
         "placeholderText": "Search organizations...",
         "emptyText": "No organizations",
@@ -55,41 +56,6 @@
             "value": "pfl",
             "label": "PFL",
             "description": "Professional Fighters League"
-          },
-          {
-            "value": "ksw",
-            "label": "KSW (coming soon)",
-            "description": "Konfrontacja Sztuk Walki. No data source yet."
-          },
-          {
-            "value": "one",
-            "label": "ONE Championship (coming soon)",
-            "description": "No data source yet."
-          },
-          {
-            "value": "bellator",
-            "label": "Bellator (coming soon)",
-            "description": "No data source yet."
-          },
-          {
-            "value": "rizin",
-            "label": "RIZIN (coming soon)",
-            "description": "No data source yet."
-          },
-          {
-            "value": "cage-warriors",
-            "label": "Cage Warriors (coming soon)",
-            "description": "No data source yet."
-          },
-          {
-            "value": "oktagon",
-            "label": "OKTAGON (coming soon)",
-            "description": "No data source yet."
-          },
-          {
-            "value": "bkfc",
-            "label": "BKFC (coming soon)",
-            "description": "Bare Knuckle FC. No data source yet."
           }
         ],
         "defaultValue": [
@@ -145,7 +111,18 @@
           "24h"
         ],
         "defaultValue": "12h",
-        "description": "12-hour or 24-hour clock for event times, shown in your local time zone."
+        "description": "12-hour or 24-hour clock for event times."
+      },
+      {
+        "key": "timeZone",
+        "type": "enum",
+        "label": "Time zone",
+        "options": [
+          "venue",
+          "local"
+        ],
+        "defaultValue": "venue",
+        "description": "Time zone for event times: \"venue\" (Event location) or \"local\" (System)."
       },
       {
         "key": "textSize",

@@ -19,7 +19,9 @@ Item {
   readonly property string cacheDir: root.cacheHome + "/omarchy-mma"
 
   // Pushed in by the bar widget, the only side the shell injects settings into.
-  property var organizations: ["ufc"]
+  // null until the widget has injected the setting, so nothing is fetched or
+  // shown for a default the user may have changed.
+  property var organizations: null
   property int eventLimit: 10
   property int lookaheadDays: 120
   property int refreshMinutes: 180
@@ -33,7 +35,7 @@ Item {
 
   // Every fetched event per organization, before the merge and the limit.
   property var byOrg: ({})
-  // Cards by event id: { sections, loading, error }. Fetched when opened.
+  // Cards by event id: { sections, loading, error }. Fetched when opened, and for the soonest event after a refresh.
   property var cards: ({})
 
   // Bumped whenever the selection changes so results fetched for an old one
@@ -45,7 +47,7 @@ Item {
   property string lastError: ""
   property var cardQueue: []
 
-  onOrganizationsChanged: refreshSoon()
+  onOrganizationsChanged: if (root.organizations !== null) refreshSoon()
   onLookaheadDaysChanged: refreshSoon()
   onEventLimitChanged: root.merge()
   onRefreshMinutesChanged: timer.restart()
@@ -53,6 +55,7 @@ Item {
   function refreshSoon() { Qt.callLater(refresh) }
 
   function refresh() {
+    if (root.organizations === null) return
     var wanted = Model.selectedOrganizations(root.organizations)
     root.generation++
     root.gathered = ({})
@@ -101,6 +104,9 @@ Item {
     root.fetchedAt = Date.now()
     root.merge()
     root.saveCache()
+    // The crown and the segments only come from the card fetch, so start the
+    // soonest event's now rather than when the panel opens.
+    if (root.events.length > 0) root.loadCard(root.events[0].id)
   }
 
   function merge() {
@@ -162,8 +168,10 @@ Item {
     cacheMkdir.running = true
   }
 
+  // Only https URLs ever reach the browser launcher, whatever produced them.
   function openUrl(url) {
-    if (url) Quickshell.execDetached(["omarchy-launch-browser", url])
+    var safe = Model.safeUrl(url)
+    if (safe !== "") Quickshell.execDetached(["omarchy-launch-browser", safe])
   }
 
   Timer {
@@ -237,7 +245,8 @@ Item {
     onLoaded: {
       var cached = Model.parseCache(text())
       if (!cached || root.events.length > 0) return
-      root.events = Model.upcomingOnly(cached.events, new Date())
+      root.events = Model.forOrganizations(Model.upcomingOnly(cached.events, new Date()),
+        Model.selectedOrganizations(root.organizations))
       root.fetchedAt = cached.fetchedAt
       // A fetch that already failed before the cache was read.
       root.offline = !root.loading && root.errorText !== ""

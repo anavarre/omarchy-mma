@@ -11,5 +11,7 @@ bash -n bin/mma-api \
   && ! bin/mma-api events 'x;y' 20261029-20261120 > /dev/null 2>&1 \
   && ! bin/mma-api events ufc 'nope' > /dev/null 2>&1 \
   && ! bin/mma-api card ufc 'abc' 1 > /dev/null 2>&1 \
+  && ! MMA_SITE_BASE=http://127.0.0.1:9 bin/mma-api events ufc 20261029-20261120 > /dev/null 2>&1 \
+  && ! MMA_SITE_BASE=file:///etc bin/mma-api events ufc 20261029-20261120 > /dev/null 2>&1 \
   && echo ok || failed="$failed api"
 [ -z "$failed" ] && echo "ALL PASSED" || { echo "FAILED:$failed"; exit 1; }
