@@ -47,6 +47,7 @@ BarWidget {
     panelLoader.item.textSize = Model.knownTextSize(root.setting("textSize", "medium"))
     panelLoader.item.timeFormat = Model.knownTimeFormat(root.setting("timeFormat", "12h"))
     panelLoader.item.timeZone = Model.knownTimeZone(root.setting("timeZone", "venue"))
+    panelLoader.item.showResults = root.setting("showResults", false) === true
   }
 
   // Called by the panel's settings view. Applied locally first so the panel
@@ -63,6 +64,7 @@ BarWidget {
   function setOrganizations(list) { root.saveSetting("organizations", list) }
   function saveTimeZone(zone) { root.saveSetting("timeZone", Model.knownTimeZone(zone)) }
   function saveKeepFinishedDays(days) { root.saveSetting("keepFinishedDays", Model.knownKeepDays(days)) }
+  function saveShowResults(show) { root.saveSetting("showResults", show === true) }
   function saveTextSize(size) { root.saveSetting("textSize", Model.knownTextSize(size)) }
 
   readonly property var nextEvent: root.service ? Model.nextEvent(root.service.events) : null

@@ -36,6 +36,7 @@
       "timeFormat": "12h",
       "timeZone": "venue",
       "keepFinishedDays": 1,
+      "showResults": false,
       "textSize": "medium"
     },
     "schema": [
@@ -136,6 +137,13 @@
         ],
         "defaultValue": 1,
         "description": "How long an event that is over stays in the list, with a green check mark, before it is removed."
+      },
+      {
+        "key": "showResults",
+        "type": "boolean",
+        "label": "Show fight results",
+        "defaultValue": false,
+        "description": "Show the winner, loser and how each finished fight ended. Off by default to avoid spoilers."
       },
       {
         "key": "textSize",

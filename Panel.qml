@@ -160,6 +160,13 @@ Panel {
 
   function outcomeOf(fight, i) { return root.showResults ? Model.outcome(fight, i) : "none" }
 
+  function pickShowResults(value) {
+    if (value === root.showResults) return
+    root.showResults = value
+    if (root.hostWidget && typeof root.hostWidget.saveShowResults === "function")
+      root.hostWidget.saveShowResults(value)
+  }
+
   readonly property int keepDaysIndex: Math.max(0, Model.keepDaysChoices.indexOf(root.keepFinishedDays))
 
   function stepTimeZone(delta) {
@@ -178,16 +185,18 @@ Panel {
       root.hostWidget.saveKeepFinishedDays(value)
   }
 
-  // Settings rows: one per organization, then the time zone, keep-days and
-  // text size steppers.
-  readonly property int settingsRowCount: root.promotions.length + 3
+  // Settings rows: one per organization, then the time zone, keep-days,
+  // results and text size steppers.
+  readonly property int settingsRowCount: root.promotions.length + 4
   readonly property int zoneRow: root.promotions.length
   readonly property int keepRow: root.promotions.length + 1
-  readonly property int sizeRow: root.promotions.length + 2
+  readonly property int resultsRow: root.promotions.length + 2
+  readonly property int sizeRow: root.promotions.length + 3
 
   function stepSettingsRow(dx) {
     if (root.settingsSelected === root.zoneRow) root.stepTimeZone(dx)
     else if (root.settingsSelected === root.keepRow) root.stepKeepDays(dx)
+    else if (root.settingsSelected === root.resultsRow) root.pickShowResults(dx > 0)
     else if (root.settingsSelected === root.sizeRow) root.stepTextSize(dx)
   }
 
@@ -734,6 +743,74 @@ Panel {
             }
           }
 
+          // Winners, losers and how a fight ended are spoilers: hidden by default.
+          Item {
+            width: parent.width
+            height: Math.max(resultsCaption.implicitHeight, resultsControls.implicitHeight) + Style.space(14)
+
+            Rectangle {
+              anchors.fill: parent
+              radius: Style.space(6)
+              color: root.settingsSelected === root.resultsRow ? Qt.alpha(root.accent, 0.18) : "transparent"
+            }
+            HoverHandler { onHoveredChanged: if (hovered) root.settingsSelected = root.resultsRow }
+
+            Text {
+              id: resultsCaption
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              width: parent.width - resultsControls.width - Style.space(16)
+              text: "Fight results"
+              elide: Text.ElideRight
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: root.fs(Style.font.body)
+            }
+
+            Row {
+              id: resultsControls
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(8)
+
+              PanelActionButton {
+                anchors.verticalCenter: parent.verticalCenter
+                // nf-fa-angle_left (U+F104)
+                iconText: "\uf104"
+                tooltipText: "Hide"
+                enabled: root.showResults
+                foreground: root.foreground
+                hoverColor: root.foreground
+                fontSize: root.fs(Style.font.bodySmall)
+                onClicked: root.pickShowResults(false)
+              }
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(Math.round(70 * root.textScale))
+                horizontalAlignment: Text.AlignHCenter
+                text: root.showResults ? "Show" : "Hide"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: root.fs(Style.font.body)
+              }
+
+              PanelActionButton {
+                anchors.verticalCenter: parent.verticalCenter
+                // nf-fa-angle_right (U+F105)
+                iconText: "\uf105"
+                tooltipText: "Show"
+                enabled: !root.showResults
+                foreground: root.foreground
+                hoverColor: root.foreground
+                fontSize: root.fs(Style.font.bodySmall)
+                onClicked: root.pickShowResults(true)
+              }
+            }
+          }
+
           // Same minus/plus control as miniflux; the panel redraws at the
           // chosen size as soon as it is picked.
           Item {
@@ -905,6 +982,7 @@ Panel {
                           id: leftSide
                           anchors.left: parent.left
                           width: bout.sideWidth
+                          opacity: root.outcomeOf(bout.modelData, 0) === "loss" ? 0.5 : 1
                           Text {
                             width: parent.width
                             elide: Text.ElideRight
@@ -941,6 +1019,7 @@ Panel {
                           id: rightSide
                           anchors.right: parent.right
                           width: bout.sideWidth
+                          opacity: root.outcomeOf(bout.modelData, 1) === "loss" ? 0.5 : 1
                           Text {
                             width: parent.width
                             horizontalAlignment: Text.AlignRight
@@ -982,7 +1061,6 @@ Panel {
                   }
                 }
               }
-                          opacity: root.outcomeOf(bout.modelData, 0) === "loss" ? 0.5 : 1
             }
           }
         }
@@ -1019,7 +1097,6 @@ Panel {
             font.family: root.fontFamily
             font.pixelSize: root.fs(Style.font.bodySmall)
           }
-                          opacity: root.outcomeOf(bout.modelData, 1) === "loss" ? 0.5 : 1
           Text {
             visible: !root.showSettings && !root.showCard
             text: "s Settings"

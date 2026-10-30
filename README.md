@@ -3,6 +3,7 @@
 Upcoming MMA events in the Omarchy bar. Click the glove to see what's coming up
 from the promotions you follow, then click an event for its full fight card:
 main card first, prelims after, with the challenger always on the right.
+Once a fight is over, the winner gets a green check, the loser is dimmed, and the round, time and method are shown. This is hidden by default to avoid spoilers; turn on `showResults` to see it.
 
 ![Omarchy MMA preview](preview.png)
 
@@ -48,6 +49,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 | `refreshMinutes` | `180` | Background refresh interval. |
 | `timeFormat` | `12h` | `12h` or `24h`. |
 | `timeZone` | `venue` | Time zone for event times: `venue` (each event's own location, worked out from its venue address) or `local` (this computer's). Also set from the panel's settings, above the text size. |
+| `showResults` | `false` | Show winners, losers and how finished fights ended. Off by default, since it spoils results. Also set from the panel's settings. |
 | `textSize` | `medium` | `small`, `medium`, `large` or `xlarge`. |
 
 ## Using it
