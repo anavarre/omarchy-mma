@@ -155,6 +155,7 @@ Panel {
     function cardFor(id) { return { sections: [], loading: false, error: "" } }
     function loadCard(id) {}
     function refresh() {}
+    function hardRefresh() {}
     function openUrl(url) {}
   }
 
@@ -364,7 +365,7 @@ Panel {
           else if (text === "t") root.pickTimeZone(root.timeZone === "venue" ? "local" : "venue")
         }
         else if (text === "s") root.openSettings()
-        else if (text === "r") root.mma.refresh()
+        else if (text === "r") root.mma.hardRefresh()
         else if (text === "o") {
           var e = root.showCard ? root.currentEvent : root.events[root.selected]
           if (e) root.mma.openUrl(e.url)

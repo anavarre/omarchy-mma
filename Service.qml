@@ -284,6 +284,17 @@ Item {
         f.push(eventsProcess.org)
         root.failures = f
         root.lastError = error
+  // The r key: forget everything kept, on disk too, and fetch it all again.
+  function hardRefresh() {
+    root.segmentCache = ({})
+    root.recordTimes = ({})
+    root.records = ({})
+    root.recordQueue = []
+    root.forgetCards()
+    root.refresh()
+    root.saveCache()
+  }
+
       }
       Qt.callLater(root.fetchNext)
     }
