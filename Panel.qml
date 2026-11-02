@@ -19,6 +19,73 @@ Panel {
   property var service: null
   readonly property var mma: root.service || inertService
 
+  // The record line under a fighter's name: a spinner while the record is
+  // being looked up, the record once it is known, and a note when it is not.
+  component RecordLine: Item {
+    id: line
+    required property var fighter
+    required property bool rightAligned
+    required property color dim
+    required property string fontFamily
+    required property real pixelSize
+    required property bool active
+    readonly property bool pending: line.fighter.recordPending === true
+    readonly property string label: line.fighter.record !== ""
+      ? line.fighter.record
+      : (line.fighter.recordMissing === "blocked" ? "Blocked by vendor!" : (line.fighter.recordMissing === "na" ? "N/A" : ""))
+    visible: line.pending || line.label !== ""
+    height: line.visible ? labelText.implicitHeight : 0
+
+    Text {
+      id: labelText
+      anchors.left: parent.left
+      anchors.right: parent.right
+      horizontalAlignment: line.rightAligned ? Text.AlignRight : Text.AlignLeft
+      elide: Text.ElideRight
+      textFormat: Text.PlainText
+      text: line.label
+      font.italic: line.fighter.record === "" && !!line.fighter.recordMissing
+      color: line.dim
+      font.family: line.fontFamily
+      font.pixelSize: line.pixelSize
+    }
+
+    // A thin ring with a gap, turning steadily: drawn once, then rotated.
+    Canvas {
+      id: spinner
+      visible: line.pending
+      readonly property real size: Math.round(line.pixelSize * 1.05)
+      width: spinner.size
+      height: spinner.size
+      anchors.left: line.rightAligned ? undefined : parent.left
+      anchors.right: line.rightAligned ? parent.right : undefined
+      anchors.verticalCenter: parent.verticalCenter
+      transformOrigin: Item.Center
+      onPaint: {
+        var ctx = getContext("2d")
+        ctx.reset()
+        var w = Math.max(1.5, spinner.size / 9)
+        ctx.lineWidth = w
+        ctx.lineCap = "round"
+        ctx.strokeStyle = line.dim
+        ctx.beginPath()
+        ctx.arc(spinner.size / 2, spinner.size / 2, spinner.size / 2 - w, 0, Math.PI * 1.55)
+        ctx.stroke()
+      }
+      Connections {
+        target: line
+        function onDimChanged() { spinner.requestPaint() }
+      }
+      RotationAnimator on rotation {
+        from: 0
+        to: 360
+        duration: 800
+        loops: Animation.Infinite
+        running: line.pending && line.active
+      }
+    }
+  }
+
   // Events that are over stay listed, with a check mark, for the number of days
   // set in Settings. The clock is refreshed while the panel is open so a row
   // leaves the list on time without waiting for a refresh.
@@ -997,15 +1064,14 @@ Panel {
                             font.pixelSize: root.fs(Style.font.body)
                             font.bold: !bout.modelData.fighters[0].tba
                           }
-                          Text {
+                          RecordLine {
                             width: parent.width
-                            visible: text !== ""
-                            elide: Text.ElideRight
-                            textFormat: Text.PlainText
-                            text: bout.modelData.fighters[0].record
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: root.fs(Style.font.bodySmall)
+                            fighter: bout.modelData.fighters[0]
+                            rightAligned: false
+                            dim: root.dim
+                            fontFamily: root.fontFamily
+                            pixelSize: root.fs(Style.font.bodySmall)
+                            active: root.opened
                           }
                         }
 
@@ -1035,16 +1101,14 @@ Panel {
                             font.pixelSize: root.fs(Style.font.body)
                             font.bold: !bout.modelData.fighters[1].tba
                           }
-                          Text {
+                          RecordLine {
                             width: parent.width
-                            visible: text !== ""
-                            horizontalAlignment: Text.AlignRight
-                            elide: Text.ElideRight
-                            textFormat: Text.PlainText
-                            text: bout.modelData.fighters[1].record
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: root.fs(Style.font.bodySmall)
+                            fighter: bout.modelData.fighters[1]
+                            rightAligned: true
+                            dim: root.dim
+                            fontFamily: root.fontFamily
+                            pixelSize: root.fs(Style.font.bodySmall)
+                            active: root.opened
                           }
                         }
                       }
