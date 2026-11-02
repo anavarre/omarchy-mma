@@ -22,7 +22,8 @@
       "mma",
       "ufc",
       "pfl",
-      "fights"
+      "fights",
+      "cagewarriors"
     ],
     "allowMultiple": false,
     "defaultSection": "right",
@@ -44,7 +45,7 @@
         "key": "organizations",
         "type": "multiselect",
         "label": "Organizations",
-        "description": "Which promotions to show events for. UFC and PFL are available.",
+        "description": "Which promotions to show events for. UFC, PFL and Cage Warriors are available.",
         "noSelectionText": "None selected",
         "placeholderText": "Search organizations...",
         "emptyText": "No organizations",
@@ -58,6 +59,11 @@
             "value": "pfl",
             "label": "PFL",
             "description": "Professional Fighters League"
+          },
+          {
+            "value": "cw",
+            "label": "Cage Warriors",
+            "description": "Cage Warriors Fighting Championship"
           }
         ],
         "defaultValue": [

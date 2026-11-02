@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs every portable check: Model.js unit tests against saved ESPN responses,
+# Runs every portable check: Model.js unit tests against saved ESPN and Wikipedia responses,
 # and a syntax and argument check of bin/mma-api. None of it needs Omarchy, a
 # display or the network.
 set -u
@@ -11,6 +11,14 @@ bash -n bin/mma-api \
   && ! bin/mma-api events 'x;y' 20261029-20261120 > /dev/null 2>&1 \
   && ! bin/mma-api events ufc 'nope' > /dev/null 2>&1 \
   && ! bin/mma-api card ufc 'abc' 1 > /dev/null 2>&1 \
+  && ! bin/mma-api wiki > /dev/null 2>&1 \
+  && ! bin/mma-api wiki '2026;x' > /dev/null 2>&1 \
+  && ! bin/mma-api wiki 1999 > /dev/null 2>&1 \
+  && ! bin/mma-api records > /dev/null 2>&1 \
+  && ! MMA_SHERDOG_BASE=http://127.0.0.1:9 bin/mma-api records 'Nik Bagley' > /dev/null 2>&1 \
+  && ! MMA_SHERDOG_BASE=file:///etc bin/mma-api records 'Nik Bagley' > /dev/null 2>&1 \
+  && ! MMA_WIKI_API=http://127.0.0.1:9 bin/mma-api wiki 2026 > /dev/null 2>&1 \
+  && ! MMA_WIKI_API=file:///etc bin/mma-api wiki 2026 > /dev/null 2>&1 \
   && ! MMA_SITE_BASE=http://127.0.0.1:9 bin/mma-api events ufc 20261029-20261120 > /dev/null 2>&1 \
   && ! MMA_SITE_BASE=file:///etc bin/mma-api events ufc 20261029-20261120 > /dev/null 2>&1 \
   && echo ok || failed="$failed api"

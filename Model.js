@@ -3,11 +3,12 @@
 // Pure helpers shared by Service.qml, Panel.qml and BarWidget.qml, kept free of
 // QML types so they can be unit-tested with node (tests/model.test.js).
 
-// Promotions the settings pane offers. `enabled` ones have a data provider
-// (ESPN).
+// Promotions the settings pane offers. `enabled` ones have a data provider:
+// "espn" (the default) or "wikipedia" (see parseWikipedia).
 var promotions = [
   { id: "ufc", label: "UFC", slug: "ufc", enabled: true, logo: "assets/ufc.png", description: "Ultimate Fighting Championship" },
-  { id: "pfl", label: "PFL", slug: "pfl", enabled: true, logo: "assets/pfl.png", description: "Professional Fighters League" }
+  { id: "pfl", label: "PFL", slug: "pfl", enabled: true, logo: "assets/pfl.png", description: "Professional Fighters League" },
+  { id: "cw", label: "Cage Warriors", slug: "cage-warriors", enabled: true, logo: "", tag: "CW", provider: "wikipedia", description: "Cage Warriors Fighting Championship" }
 ]
 
 var defaultOrganizations = ["ufc"]
@@ -79,6 +80,13 @@ function toggleOrganization(current, id, on) {
   var chosen = selectedOrganizations(current).filter(function(x) { return x !== id })
   if (on) chosen.push(id)
   return promotions.filter(function(q) { return chosen.indexOf(q.id) >= 0 }).map(function(q) { return q.id })
+}
+
+// The short text shown in the list's logo slot for a promotion without a
+// logo: it has to fit a small square, so "CW", not "Cage Warriors".
+function tagFor(orgId) {
+  var p = promotionById(orgId)
+  return p ? (p.tag || p.label) : String(orgId).toUpperCase()
 }
 
 // The bundled logo path (relative to the plugin) for an event's promotion.
@@ -377,7 +385,8 @@ function fight(comp) {
     // Filled in from the core API once the card is opened.
     segment: "",
     matchNumber: 0,
-    champion: false
+    champion: false,
+    method: ""
   }
 }
 
@@ -435,12 +444,15 @@ function parseScoreboard(text, orgId) {
       id: String(e.id),
       org: orgId,
       orgLabel: promo ? promo.label : String(orgId).toUpperCase(),
+      orgTag: tagFor(orgId),
       logo: logoFor(orgId),
       slug: promo ? promo.slug : String(orgId),
       name: String(e.name || e.shortName || ""),
       shortName: String(e.shortName || e.name || ""),
       date: String(e.date || ""),
       finished: status === "STATUS_FINAL",
+      dateOnly: false,
+      inline: false,
       venue: venueText(venue),
       tz: zoneForAddress(venue && venue.address),
       broadcast: broadcastText(first),
@@ -561,11 +573,13 @@ function buildCard(event, segments) {
     // The scoreboard lists fights in ascending billing, main event last, so a
     // higher index is a higher billing.
     copy.rank = i
-    copy.segment = s ? s.segment : ""
-    copy.matchNumber = s ? s.matchNumber : 0
-    copy.champion = s ? s.champion : false
+    // Fights from a provider that carries the whole card (Wikipedia) bring
+    // their own segment, billing and method; ESPN's come from `segments`.
+    copy.segment = s ? s.segment : str(f.segment)
+    copy.matchNumber = s ? s.matchNumber : (Number(f.matchNumber) || 0)
+    copy.champion = s ? s.champion : f.champion === true
     copy.segmentLabel = s ? s.label : ""
-    copy.method = s ? s.method : ""
+    copy.method = s ? s.method : str(f.method)
     return copy
   })
   var known = fights.some(function(f) { return f.segment !== "" })
@@ -670,7 +684,314 @@ function resultLabel(f) {
   return [end, f.method || ""].filter(Boolean).join(" ")
 }
 
+// ----------------------------------------------------------------- records
+// Wikipedia's cards name fighters but carry no records, so `bin/mma-api records`
+// looks them up on Sherdog. The answer is a JSON object {name: value}, where
+// value is "W-L-D", "n/a" (Sherdog answered but has no usable record) or
+// "blocked" (it did not answer properly). Anything else is dropped, whatever
+// the server sent.
+var recordShape = /^[0-9]{1,3}-[0-9]{1,3}-[0-9]{1,3}(?: \([0-9]{1,3} NC\))?$/
+
+function parseRecords(text) {
+  var out = ({})
+  var data
+  try { data = JSON.parse(text) } catch (e) { return out }
+  if (!isObject(data)) return out
+  Object.keys(data).forEach(function(name) {
+    var v = data[name]
+    if (typeof v === "string" && (recordShape.test(v) || v === "n/a" || v === "blocked")) out[name] = v
+  })
+  return out
+}
+
+// Names on an event's card that have no record yet, each once. Only a real
+// record counts as known: "n/a" and "blocked" are looked up again.
+function namesNeedingRecords(event, known) {
+  var seen = ({})
+  var names = []
+  list(event && event.fights).forEach(function(f) {
+    list(f.fighters).forEach(function(x) {
+      if (!x || x.tba || x.record || !x.name || seen[x.name] || (known && recordShape.test(str(known[x.name])))) return
+      seen[x.name] = true
+      names.push(x.name)
+    })
+  })
+  return names
+}
+
+// A copy of the event whose fighters carry the records found for them. A
+// fighter still without one is flagged recordPending while the lookup runs and
+// recordMissing once it is `settled`, so the panel can show a spinner and then
+// say why there is none: "blocked" (the vendor refused) or "na" (it has none).
+function withRecords(event, records, settled) {
+  var copy = {}
+  for (var k in event) copy[k] = event[k]
+  copy.fights = list(event && event.fights).map(function(f) {
+    var g = {}
+    for (var k2 in f) g[k2] = f[k2]
+    g.fighters = list(f.fighters).map(function(x) {
+      var h = {}
+      for (var k3 in x) h[k3] = x[k3]
+      if (!h.record && Object.prototype.hasOwnProperty.call(records, h.name) && recordShape.test(str(records[h.name]))) h.record = records[h.name]
+      var wanted = event.inline === true && !h.record && !h.tba
+      h.recordMissing = wanted && settled === true ? (records[h.name] === "n/a" ? "na" : "blocked") : ""
+      h.recordPending = wanted && settled !== true
+      return h
+    })
+    return g
+  })
+  return copy
+}
+
+// ------------------------------------------------------------ wikipedia
+//
+// Cage Warriors has no usable ESPN coverage and its own site refuses
+// programmatic clients, so its events come from Wikipedia's "<year> in Cage
+// Warriors" pages (bin/mma-api wiki). Each event is a section holding an
+// infobox (date, venue, city) and a card of {{MMAevent bout}} templates, with
+// results filled in after the fact. The pages have dates but no start times,
+// so these events are `dateOnly`, and they carry their whole card (`inline`):
+// there is no second request when one is opened.
+
+function providerOf(orgId) {
+  var p = promotionById(orgId)
+  return p && p.provider ? p.provider : "espn"
+}
+
+// Years whose "<year> in Cage Warriors" pages cover the window: from `back`
+// days ago to `days` days ahead.
+function wikiYears(now, days, back) {
+  var from = new Date(now.getTime() - (back > 0 ? back : 1) * 86400000).getUTCFullYear()
+  var to = new Date(now.getTime() + days * 86400000).getUTCFullYear()
+  var years = []
+  for (var y = from; y <= to && years.length < 4; y++) years.push(String(y))
+  return years
+}
+
+// Wikitext reduced to the plain text a reader sees: links, templates, refs and
+// emphasis removed.
+function wikiPlain(text) {
+  var s = str(text)
+  s = s.replace(/<ref[^>]*\/>/gi, "").replace(/<ref[^>]*>[\s\S]*?<\/ref>/gi, "")
+  s = s.replace(/<!--[\s\S]*?-->/g, "").replace(/<br\s*\/?>/gi, " ")
+  s = s.replace(/<[^>]+>/g, "")
+  s = s.replace(/\{\{(?:flagicon|flag|nowrap)[^{}]*\}\}/gi, "")
+  s = s.replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1")
+  s = s.replace(/'{2,}/g, "")
+  return s.replace(/\s+/g, " ").trim()
+}
+
+function capitalized(w) { return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() }
+
+// "Decision (unanimous) (29–28, ...)" -> "Unanimous Decision"; the judges'
+// scores and any other trailing note are dropped. "TKO (punches)" is kept.
+function wikiMethod(text) {
+  var s = wikiPlain(text)
+  var m = /^(Decision|Draw)\s*\(\s*(unanimous|split|majority)\s*\)/i.exec(s)
+  if (m) return capitalized(m[2]) + " " + capitalized(m[1])
+  return s.replace(/\s*\((?=[^)]*\d\s*[–-]\s*\d)[^)]*\)\s*$/, "").slice(0, 80)
+}
+
+function wikiSegment(label) {
+  var s = wikiPlain(label).toLowerCase()
+  if (/early|prelim.*2/.test(s)) return "prelims2"
+  if (/prelim/.test(s)) return "prelims1"
+  return "main"
+}
+
+// The {{MMAevent card}} and {{MMAevent bout}} templates of an event's section,
+// in listed order (main event first): [{ segment, parts: [...] }].
+function wikiBouts(section) {
+  var out = []
+  var segment = "main"
+  // The one-line card template must be tried first: the bout's lazy match
+  // would otherwise run on through the bouts after it.
+  var re = /\{\{MMAevent card\|([^}\n]*)\}\}|\{\{MMAevent bout([\s\S]*?)\n\}\}/g
+  var m
+  while ((m = re.exec(section)) !== null && out.length < maxFightsPerEvent) {
+    if (m[1] !== undefined) { segment = wikiSegment(m[1].split("|")[0]); continue }
+    out.push({ segment: segment, parts: String(m[2]).split(/\n\|/).slice(1) })
+  }
+  return out
+}
+
+function wikiFighter(raw, winner) {
+  var name = wikiPlain(raw)
+  var crowned = /\((?:c|ic)\)/i.test(name)
+  name = name.replace(/\s*\((?:c|ic)\)\s*/gi, " ").trim()
+  var tba = isTba(name)
+  return { name: tba ? "TBA" : name, shortName: tba ? "TBA" : name, record: "", country: "", winner: winner, tba: tba, crowned: crowned }
+}
+
+function wikiFight(b, index) {
+  var p = b.parts
+  var versus = wikiPlain(p[2] || "")
+  var method = wikiMethod(p[4] || "")
+  var done = method !== ""
+  var decisive = done && /^def/i.test(versus)
+  var a = wikiFighter(p[1], decisive)
+  var d = wikiFighter(p[3], false)
+  var note = wikiPlain(p[7] || "")
+  // A title fight reads "For the ... Championship"; an interim title has no
+  // champion yet, so there is no crown (as for ESPN's).
+  var title = /\bchampionship\b|\btitle\b/i.test(note) && !/\binterim\b/i.test(note)
+  return {
+    id: String(index + 1),
+    weightClass: wikiPlain(p[0] || ""),
+    rounds: 0,
+    startDate: "",
+    status: done ? "STATUS_FINAL" : "STATUS_SCHEDULED",
+    done: done,
+    round: roundNumber(wikiPlain(p[5] || "")),
+    clock: wikiPlain(p[6] || ""),
+    fighters: [a, d].map(function(f) {
+      return { name: f.name, shortName: f.shortName, record: "", country: "", winner: f.winner, tba: f.tba }
+    }),
+    segment: b.segment,
+    matchNumber: index + 1,
+    champion: title || a.crowned || d.crowned,
+    method: method
+  }
+}
+
+// "{{start date|2026|11|7}}" or "{{Start date|2026|2|21|...}}" -> noon UTC of
+// that day, so every time zone shows the right date; "" when unreadable.
+function wikiDate(text) {
+  var m = /\{\{\s*start date\s*\|\s*(\d{4})\s*\|\s*(\d{1,2})\s*\|\s*(\d{1,2})/i.exec(str(text))
+  if (!m) return ""
+  var d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12))
+  return isNaN(d.getTime()) ? "" : d.toISOString()
+}
+
+function infoboxField(box, key) {
+  var m = new RegExp("^\\|\\s*" + key + "\\s*=([^\\n]*)", "mi").exec(box)
+  return m ? m[1] : ""
+}
+
+// Events from the MediaWiki API answers bin/mma-api wiki prints (an array of
+// them, or one). Cancelled events are dropped; events from before `now` are
+// flagged finished once their results are in or a day has passed; events
+// further than `days` ahead are dropped.
+function parseWikipedia(text, orgId, now, days) {
+  var data = typeof text === "string" ? parseJson(text) : text
+  var pages = Array.isArray(data) ? data : (data ? [data] : [])
+  var promo = promotionById(orgId)
+  var out = []
+  var nowMs = now === undefined ? Date.now() : Number(now)
+  pages.forEach(function(page) {
+    var wikitext = isObject(page) && isObject(page.parse) ? str(page.parse.wikitext) : ""
+    var title = isObject(page) && isObject(page.parse) ? str(page.parse.title).replace(/ /g, "_") : ""
+    if (wikitext === "") return
+    // Each event is a level-2 section with an infobox.
+    var sections = wikitext.split(/^==\s*(?!=)/m).slice(1)
+    sections.forEach(function(sec, i) {
+      var nameMatch = /^([^=\n]+?)\s*==\s*\n/.exec(sec)
+      var box = /\{\{Infobox MMA event[\s\S]*?\n\}\}/i.exec(sec)
+      if (!nameMatch || !box) return
+      var heading = wikiPlain(nameMatch[1])
+      var date = wikiDate(infoboxField(box[0], "date"))
+      if (date === "") return
+      var intro = sec.slice(box.index + box[0].length).split(/^===/m)[0]
+      if (/\b(cancell?ed|postponed)\b/i.test(wikiPlain(intro))) return
+      var bouts = wikiBouts(sec)
+      // The listed order has the main event first; the model wants it last.
+      var fights = bouts.map(wikiFight).reverse()
+      var number = /(\d+)/.exec(heading)
+      var id = number ? String(8000000 + Number(number[1])) : String(8100000 + (new Date(date).getUTCFullYear() % 100) * 1000 + i)
+      var name = wikiPlain(infoboxField(box[0], "name")) || heading
+      var city = wikiPlain(infoboxField(box[0], "city"))
+      var country = city.indexOf(",") >= 0 ? city.split(",").pop().trim() : city
+      var startMs = new Date(date).getTime()
+      var allDone = fights.length > 0 && fights.every(function(f) { return f.done })
+      var finished = allDone || nowMs - startMs > eventLengthMs + 12 * 3600 * 1000
+      if (!finished && days !== undefined && startMs - nowMs > days * 86400000) return
+      var fightCount = fights.length
+      var short = /^(Cage Warriors \d+)/.exec(name)
+      out.push({
+        id: id,
+        org: orgId,
+        orgLabel: promo ? promo.label : String(orgId).toUpperCase(),
+        orgTag: tagFor(orgId),
+        logo: logoFor(orgId),
+        slug: promo ? promo.slug : String(orgId),
+        name: name,
+        shortName: short ? short[1] : name,
+        date: date,
+        dateOnly: true,
+        inline: true,
+        finished: finished,
+        venue: [wikiPlain(infoboxField(box[0], "venue")), city].filter(Boolean).join(" · "),
+        tz: zoneForAddress({ country: country }),
+        broadcast: "",
+        url: title !== "" ? safeUrl("https://en.wikipedia.org/wiki/" + encodeURI(title) + "#" + encodeURI(heading.replace(/ /g, "_"))) : "",
+        fights: fights,
+        fightCount: fightCount,
+        headliner: fightCount > 0 ? fights[fightCount - 1] : null
+      })
+    })
+  })
+  return sortEvents(out)
+}
+
+// "Sat, Nov 7 · 12:00 PM", or just the day when the source has no start time.
+function whenText(e, format, zoneId) {
+  var day = formatDay(e.date, zoneId)
+  return e.dateOnly === true ? day : day + " · " + formatTime(e.date, format, zoneId)
+}
+
 // ------------------------------------------------------------------- cache
+
+// ------------------------------------------------------------ card cache
+//
+// What a card needed a request for (the segments of an ESPN card, the fight
+// record of a Cage Warriors fighter) is kept on disk for 12 hours, so reopening an
+// event, or the app, costs nothing. Only answers worth keeping are stored: a
+// vendor that refused ("blocked") is asked again next time.
+
+var cardCacheMs = 12 * 60 * 60 * 1000
+
+function cardCacheFresh(at, now) {
+  var age = now - Number(at)
+  return isFinite(age) && age >= 0 && age < cardCacheMs
+}
+
+function serializeCardCache(segments, records) {
+  return JSON.stringify({ version: 1, segments: segments, records: records })
+}
+
+// { segments: { id: { at, data } }, records: { name: { at, value } } }, fresh
+// entries only, each rebuilt field by field: the file is not to be trusted.
+function parseCardCache(text, now) {
+  var out = { segments: ({}), records: ({}) }
+  var data = parseJson(text)
+  if (!isObject(data) || data.version !== 1) return out
+  var segs = isObject(data.segments) ? data.segments : ({})
+  Object.keys(segs).forEach(function(id) {
+    var e = segs[id]
+    if (!isId(id) || !isObject(e) || !isObject(e.data) || !cardCacheFresh(e.at, now)) return
+    var clean = ({})
+    Object.keys(e.data).forEach(function(cid) {
+      var c = e.data[cid]
+      if (!isId(cid) || !isObject(c)) return
+      clean[cid] = {
+        segment: str(c.segment),
+        label: str(c.label),
+        matchNumber: Number(c.matchNumber) || 0,
+        champion: c.champion === true,
+        method: str(c.method)
+      }
+    })
+    if (Object.keys(clean).length > 0) out.segments[id] = { at: Number(e.at), data: clean }
+  })
+  var recs = isObject(data.records) ? data.records : ({})
+  Object.keys(recs).forEach(function(name) {
+    var e = recs[name]
+    if (!isObject(e) || !cardCacheFresh(e.at, now)) return
+    var v = str(e.value)
+    if (recordShape.test(v) || v === "n/a") out.records[name] = { at: Number(e.at), value: v }
+  })
+  return out
+}
 
 function serializeCache(events, fetchedAt) {
   return JSON.stringify({ version: 1, fetchedAt: fetchedAt, events: events })
@@ -717,9 +1038,10 @@ function sanitizeFight(f) {
     round: roundNumber(f.round),
     clock: str(f.clock),
     fighters: fighters,
-    segment: "",
-    matchNumber: 0,
-    champion: false
+    segment: segmentOrder.indexOf(f.segment) >= 0 ? f.segment : "",
+    matchNumber: Math.max(0, Math.min(99, Math.floor(Number(f.matchNumber)) || 0)),
+    champion: f.champion === true,
+    method: str(f.method).slice(0, 80)
   }
 }
 
@@ -732,12 +1054,15 @@ function sanitizeEvent(e) {
     id: String(e.id),
     org: promo.id,
     orgLabel: promo.label,
+    orgTag: tagFor(promo.id),
     logo: logoFor(promo.id),
     slug: promo.slug,
     name: str(e.name),
     shortName: str(e.shortName) || str(e.name),
     date: str(e.date),
     finished: e.finished === true,
+    dateOnly: e.dateOnly === true,
+    inline: e.inline === true,
     venue: str(e.venue),
     tz: knownEventZone(e.tz),
     broadcast: str(e.broadcast),

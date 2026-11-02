@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Io
 import "Model.js" as Model
 
-// The one process-wide owner of everything fetched from ESPN: the event list,
+// The one process-wide owner of everything fetched (ESPN, and Wikipedia for Cage Warriors): the event list,
 // per-event cards and the refresh timer. The bar widget exists once per
 // monitor; they all read this instead of polling on their own.
 Item {
@@ -47,6 +47,14 @@ Item {
   property var failures: []
   property string lastError: ""
   property var cardQueue: []
+  // Fight records by fighter name, for promotions whose cards carry none
+  // (Wikipedia's): looked up once per name and kept until the app restarts.
+  property var records: ({})
+  property var recordQueue: []
+  // When each kept answer was fetched, for the 12-hour card cache on disk:
+  // segments by event id ({ at, data }), and the time of each record.
+  property var segmentCache: ({})
+  property var recordTimes: ({})
 
   onOrganizationsChanged: if (root.organizations !== null) refreshSoon()
   onLookaheadDaysChanged: refreshSoon()
@@ -85,8 +93,12 @@ Item {
     var promo = Model.promotionById(org)
     eventsProcess.org = org
     eventsProcess.generation = root.generation
-    eventsProcess.command = ["/usr/bin/bash", root.api, "events", promo.slug,
-      Model.dateRange(new Date(), Model.snapLookaheadDays(root.lookaheadDays), root.keepFinishedDays + 1)]
+    var now = new Date()
+    var days = Model.snapLookaheadDays(root.lookaheadDays)
+    var back = root.keepFinishedDays + 1
+    eventsProcess.command = Model.providerOf(org) === "wikipedia"
+      ? ["/usr/bin/bash", root.api, "wiki"].concat(Model.wikiYears(now, days, back))
+      : ["/usr/bin/bash", root.api, "events", promo.slug, Model.dateRange(now, days, back)]
     eventsProcess.running = true
   }
 
@@ -110,6 +122,9 @@ Item {
     // soonest event's now rather than when the panel opens.
     var next = Model.nextEvent(root.events)
     if (next) root.loadCard(next.id)
+    // Cage Warriors' cards carry no records, so look them up now rather than
+    // when an event is opened: they are ready by the time it is viewed.
+    root.events.forEach(function(e) { if (e.inline === true) root.loadCard(e.id) })
   }
 
   function merge() {
@@ -140,12 +155,31 @@ Item {
     if (!event) return
     var existing = root.cards[id]
     if (existing && (existing.loading || existing.done)) return
+    // An event that carries its whole card needs no second request.
+    if (event.inline === true) {
+      // Fighters without a record spin until the lookup answers; with nothing
+      // to look up the card is final already.
+      var names = Model.namesNeedingRecords(event, root.records).filter(function(n) { return !root.knownNa(n) })
+      root.setCard(id, Model.buildCard(Model.withRecords(event, root.records, names.length === 0), {}), "", true)
+      root.queueRecords(event, names)
+      return
+    }
+    var kept = root.segmentCache[id]
+    if (kept && Model.cardCacheFresh(kept.at, Date.now())) {
+      root.setCard(id, Model.buildCard(event, kept.data), "", true)
+      return
+    }
     var next = {}
     for (var k in root.cards) next[k] = root.cards[k]
     next[id] = { sections: Model.buildCard(event, {}), loading: true, error: "", done: false }
     root.cards = next
     cardQueue.push({ id: id, event: event })
     root.nextCard()
+  }
+
+  // A fighter Sherdog has no record for, asked about within the cache window.
+  function knownNa(name) {
+    return root.records[name] === "n/a" && Model.cardCacheFresh(root.recordTimes[name], Date.now())
   }
 
   function nextCard() {
@@ -158,6 +192,22 @@ Item {
     cardProcess.running = true
   }
 
+  // Looks up the records of the fighters on an inline card that still have
+  // none. The card is already on screen; it is rebuilt when they arrive.
+  function queueRecords(event, names) {
+    if (names.length === 0) return
+    recordQueue.push({ id: event.id, event: event, names: names })
+    root.nextRecords()
+  }
+
+  function nextRecords() {
+    if (recordsProcess.running || root.recordQueue.length === 0) return
+    var job = root.recordQueue.shift()
+    recordsProcess.job = job
+    recordsProcess.command = ["/usr/bin/bash", root.api, "records"].concat(job.names)
+    recordsProcess.running = true
+  }
+
   function setCard(id, sections, error, done) {
     var next = {}
     for (var k in root.cards) next[k] = root.cards[k]
@@ -165,8 +215,20 @@ Item {
     root.cards = next
   }
 
-  // Cards are re-fetched on the next open after a refresh: lineups change.
+  // Cards are rebuilt after a refresh, from the one-day cache where it holds
+  // them: lineups change, but not by the hour.
   function forgetCards() { root.cards = ({}) }
+
+  // The r key: forget everything kept, on disk too, and fetch it all again.
+  function hardRefresh() {
+    root.segmentCache = ({})
+    root.recordTimes = ({})
+    root.records = ({})
+    root.recordQueue = []
+    root.forgetCards()
+    root.refresh()
+    root.saveCache()
+  }
 
   function saveCache() {
     cacheMkdir.running = true
@@ -204,12 +266,15 @@ Item {
       var error = ""
       if (exitCode === 0) {
         try {
-          var parsed = Model.parseScoreboard(eventsOut.text, eventsProcess.org)
+          var org = eventsProcess.org
+          var parsed = Model.providerOf(org) === "wikipedia"
+            ? Model.parseWikipedia(eventsOut.text, org, Date.now(), Model.snapLookaheadDays(root.lookaheadDays))
+            : Model.parseScoreboard(eventsOut.text, org)
           var g = root.gathered
           g[eventsProcess.org] = parsed
           root.gathered = g
         } catch (e) {
-          error = "Unreadable response from ESPN."
+          error = "Unreadable response for " + Model.promotionById(eventsProcess.org).label + "."
         }
       } else {
         error = Model.errorMessage(eventsErr.text, exitCode)
@@ -236,9 +301,9 @@ Item {
     onExited: function(exitCode) {
       var job = cardProcess.job
       if (job) {
-        var sections = [], ok = false
+        var sections = [], ok = false, segments = ({})
         try {
-          var segments = exitCode === 0 ? Model.parseSegments(cardOut.text) : ({})
+          segments = exitCode === 0 ? Model.parseSegments(cardOut.text) : ({})
           ok = Object.keys(segments).length > 0
           sections = Model.buildCard(job.event, segments)
         } catch (e) {
@@ -246,8 +311,51 @@ Item {
           ok = false
         }
         root.setCard(job.id, sections, ok ? "" : "Card order is estimated from start times.", ok)
+        if (ok) {
+          var kept = root.segmentCache
+          kept[job.id] = { at: Date.now(), data: segments }
+          root.segmentCache = kept
+          root.saveCache()
+        }
       }
       Qt.callLater(root.nextCard)
+    }
+  }
+
+  Process {
+    id: recordsProcess
+    property var job: null
+    running: false
+    command: []
+    clearEnvironment: true
+    environment: Model.environment
+    stdout: StdioCollector { id: recordsOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      var job = recordsProcess.job
+      if (job) {
+        try {
+          // A failed run (exit 1: everything blocked) still settles the card:
+          // whoever has no record by now is shown as blocked or N/A.
+          var found = Model.parseRecords(recordsOut.text)
+          // A name the script never answered for counts as blocked.
+          job.names.forEach(function(n) { if (!found[n]) found[n] = "blocked" })
+          var all = {}
+          for (var k in root.records) all[k] = root.records[k]
+          var times = {}
+          for (var t in root.recordTimes) times[t] = root.recordTimes[t]
+          for (var n in found) {
+            all[n] = found[n]
+            if (found[n] !== "blocked") times[n] = Date.now()
+          }
+          root.records = all
+          root.recordTimes = times
+          root.saveCache()
+          // Only if the card is still there: a refresh may have dropped it.
+          var card = root.cards[job.id]
+          if (card && card.done) root.setCard(job.id, Model.buildCard(Model.withRecords(job.event, all, true), {}), "", true)
+        } catch (e) {}
+      }
+      Qt.callLater(root.nextRecords)
     }
   }
 
@@ -255,7 +363,36 @@ Item {
     id: cacheMkdir
     running: false
     command: ["/usr/bin/mkdir", "-p", root.cacheDir]
-    onExited: cacheFile.setText(Model.serializeCache(root.events, root.fetchedAt))
+    onExited: {
+      cacheFile.setText(Model.serializeCache(root.events, root.fetchedAt))
+      var recs = {}
+      for (var n in root.recordTimes)
+        if (root.records[n] !== undefined && root.records[n] !== "blocked") recs[n] = { at: root.recordTimes[n], value: root.records[n] }
+      cardsFile.setText(Model.serializeCardCache(root.segmentCache, recs))
+    }
+  }
+
+  FileView {
+    id: cardsFile
+    path: root.cacheDir + "/cards.json"
+    printErrors: false
+    onLoaded: {
+      var kept = Model.parseCardCache(text(), Date.now())
+      var segs = {}, all = {}, times = {}
+      var k
+      for (k in kept.segments) segs[k] = kept.segments[k]
+      for (k in root.segmentCache) segs[k] = root.segmentCache[k]
+      for (k in root.records) all[k] = root.records[k]
+      for (k in root.recordTimes) times[k] = root.recordTimes[k]
+      for (k in kept.records) {
+        if (all[k] !== undefined) continue
+        all[k] = kept.records[k].value
+        times[k] = kept.records[k].at
+      }
+      root.segmentCache = segs
+      root.records = all
+      root.recordTimes = times
+    }
   }
 
   FileView {

@@ -230,7 +230,7 @@ Panel {
 
   function whenText(e) {
     var zone = root.zoneFor(e)
-    return Model.formatDay(e.date, zone) + " · " + Model.formatTime(e.date, root.timeFormat, zone)
+    return Model.whenText(e, root.timeFormat, zone)
   }
 
   // A section's start time. When it falls on another day than the event's
@@ -428,7 +428,11 @@ Panel {
                     Text {
                       id: tagText
                       anchors.centerIn: parent
-                      text: row.modelData.orgLabel
+                      // Short ("CW"), and elided rather than overflowing the box.
+                      width: Math.min(implicitWidth, parent.width - Style.space(6))
+                      elide: Text.ElideRight
+                      horizontalAlignment: Text.AlignHCenter
+                      text: row.modelData.orgTag
                       textFormat: Text.PlainText
                       color: root.foreground
                       font.family: root.fontFamily

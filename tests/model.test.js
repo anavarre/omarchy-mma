@@ -57,9 +57,9 @@ test("forOrganizations keeps only selected promotions' events", () => {
   assert.deepStrictEqual(M.forOrganizations(events, []), []);
 });
 
-test("organizationOptions lists UFC and PFL", () => {
+test("organizationOptions lists UFC, PFL and Cage Warriors", () => {
   const ids = M.organizationOptions().map((o) => o.value);
-  assert.deepStrictEqual(ids, ["ufc", "pfl"]);
+  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw"]);
 });
 
 test("setting clamps", () => {
@@ -502,4 +502,347 @@ test("the card says how a finished fight was won", () => {
   assert.strictEqual(M.resultLabel(M.buildCard({ fights: [fight] }, {})[0].fights[0]), "R3 3:26");
   assert.strictEqual(M.resultLabel({ done: true, round: 5, clock: "5:00", method: "Unanimous Decision" }), "Unanimous Decision");
   assert.strictEqual(M.resultLabel({ done: true, round: 3, clock: "5:00", method: "Split Decision" }), "Split Decision");
+});
+
+// ------------------------------------------------------- Cage Warriors (Wikipedia)
+
+// The saved "2026 in Cage Warriors" page, as bin/mma-api wiki prints it (an
+// array of API answers). 2027 does not exist yet, so its answer is an error.
+const wikiPage = fixture("cw-2026-wiki.json");
+const wikiAnswers = JSON.stringify([JSON.parse(wikiPage), { error: { code: "missingtitle" } }]);
+const NOW = Date.parse("2026-11-02T12:00:00Z");
+const cw = M.parseWikipedia(wikiAnswers, "cw", NOW, 365);
+const cwEvent = (n) => cw.find((e) => e.name.startsWith("Cage Warriors " + n));
+
+test("Cage Warriors: every event of the year is read, in date order, a missing year skipped", () => {
+  assert.strictEqual(cw.length, 17);
+  assert.strictEqual(cw[0].name, "Cage Warriors 200: Dublin");
+  assert.strictEqual(cw[16].name, "Cage Warriors 216: Newcastle");
+  assert.deepStrictEqual(cw.map((e) => e.date), cw.map((e) => e.date).slice().sort());
+  assert.strictEqual(new Set(cw.map((e) => e.id)).size, 17);
+  assert.ok(cw.every((e) => /^[0-9]+$/.test(e.id) && e.org === "cw" && e.inline && e.dateOnly));
+});
+
+test("Cage Warriors: bad input gives no events instead of throwing", () => {
+  for (const bad of ["", "nope", "[]", "{}", "[null, 3, {\"parse\": 1}]", JSON.stringify([{ parse: { wikitext: "== x ==\n{{Infobox MMA event\n}}" } }])])
+    assert.deepStrictEqual(M.parseWikipedia(bad, "cw", NOW, 365), []);
+});
+
+test("Cage Warriors: event details and time zone", () => {
+  const e = cwEvent(211);
+  assert.strictEqual(e.name, "Cage Warriors 211: Rome");
+  assert.strictEqual(e.shortName, "Cage Warriors 211");
+  assert.strictEqual(e.date, "2026-10-17T12:00:00.000Z");
+  assert.strictEqual(e.venue, "PalaPellicone · Rome, Italy");
+  assert.strictEqual(e.tz, "Europe/Paris");
+  assert.strictEqual(e.url, "https://en.wikipedia.org/wiki/2026_in_Cage_Warriors#Cage_Warriors_211");
+  assert.strictEqual(cwEvent(213).tz, "Europe/London");
+  assert.strictEqual(e.logo, "");
+  assert.strictEqual(e.orgLabel, "Cage Warriors");
+  // The logo slot is a small square: the tag must be short enough to fit it.
+  assert.strictEqual(e.orgTag, "CW");
+});
+
+test("Cage Warriors: past events are finished, upcoming ones are not", () => {
+  assert.strictEqual(cwEvent(211).finished, true);
+  assert.strictEqual(cwEvent(212).finished, false);
+  assert.strictEqual(M.nextEvent(cw).name, "Cage Warriors 212: Spanish Showcase");
+});
+
+test("Cage Warriors: events beyond the look-ahead are dropped", () => {
+  const near = M.parseWikipedia(wikiAnswers, "cw", NOW, 30);
+  assert.deepStrictEqual(near.filter((e) => !e.finished).map((e) => e.shortName),
+    ["Cage Warriors 212", "Cage Warriors 213", "Cage Warriors 214", "Cage Warriors 215"]);
+});
+
+test("Cage Warriors: a finished card has segments, order, winners and how each fight ended", () => {
+  const sections = M.buildCard(cwEvent(211), {});
+  assert.deepStrictEqual(sections.map((s) => s.label), ["Main Card", "Prelims"]);
+  assert.strictEqual(sections[0].fights.length, 5);
+  assert.strictEqual(sections[1].fights.length, 6);
+  const main = sections[0].fights[0];
+  assert.strictEqual(M.isMainEvent(sections[0], 0), true);
+  assert.deepStrictEqual([main.fighters[0].name, main.fighters[1].name], ["Dario Bellandi", "Aldo Pereira"]);
+  assert.strictEqual(main.weightClass, "Middleweight");
+  assert.strictEqual(M.outcome(main, 0), "win");
+  assert.strictEqual(M.outcome(main, 1), "loss");
+  assert.strictEqual(M.resultLabel(main), "R2 0:13 TKO (punches)");
+  assert.strictEqual(M.headlinerText(cwEvent(211)), "Dario Bellandi vs Aldo Pereira");
+  const labels = sections.flatMap((s) => s.fights).map((f) => M.resultLabel(f));
+  assert.ok(labels.includes("Unanimous Decision"));
+  assert.ok(labels.includes("R3 5:00 Split Draw"));
+});
+
+test("Cage Warriors: a draw has no winner or loser", () => {
+  const draw = M.buildCard(cwEvent(211), {}).flatMap((s) => s.fights).find((f) => /Draw/.test(f.method));
+  assert.strictEqual(M.outcome(draw, 0), "none");
+  assert.strictEqual(M.outcome(draw, 1), "none");
+});
+
+test("Cage Warriors: an announced card has every bout, the title fight crowned, and no results", () => {
+  const e = cwEvent(213);
+  const sections = M.buildCard(e, {});
+  assert.strictEqual(sections.length, 1);
+  assert.strictEqual(sections[0].fights.length, 8);
+  const [main, second] = sections[0].fights;
+  assert.deepStrictEqual([main.fighters[0].name, main.fighters[1].name], ["Nik Bagley", "Bruno Souza"]);
+  assert.strictEqual(main.champion, true);
+  // An interim title is not a champion yet, so no crown.
+  assert.strictEqual(second.champion, false);
+  assert.ok(e.fights.every((f) => !f.done && M.resultLabel(f) === "" && M.outcome(f, 0) === "none"));
+});
+
+test("Cage Warriors: events show the day only, never an invented time", () => {
+  const e = cwEvent(213);
+  assert.strictEqual(M.whenText(e, "12h", "Europe/London"), "Sat, Nov 14");
+  assert.strictEqual(M.whenText(e, "24h", "local"), "Sat, Nov 14");
+  assert.strictEqual(M.whenText({ date: "2026-10-31T21:00Z" }, "24h", "local"), "Sat, Oct 31 · 21:00");
+  assert.strictEqual(M.sectionStart(M.buildCard(e, {})[0]), "");
+});
+
+test("Cage Warriors: a cancelled event is dropped", () => {
+  const page = JSON.parse(wikiPage);
+  page.parse.wikitext = page.parse.wikitext.replace("is an upcoming [[mixed martial arts]] event promoted by [[Cage Warriors]] that is scheduled", "was a [[mixed martial arts]] event, now cancelled, that was scheduled");
+  const events = M.parseWikipedia([page], "cw", NOW, 365);
+  assert.ok(events.length < 17);
+});
+
+test("Cage Warriors: events survive the cache with their card and no extra trust", () => {
+  const back = M.parseCache(M.serializeCache(cw, 1)).events;
+  assert.deepStrictEqual(back, cw.map((e) => JSON.parse(JSON.stringify(e))));
+  assert.deepStrictEqual(M.buildCard(back[10], {}), M.buildCard(cw[10], {}));
+});
+
+test("wikiYears covers the window, a year boundary included", () => {
+  assert.deepStrictEqual(M.wikiYears(new Date("2026-11-02T00:00:00Z"), 120, 2), ["2026", "2027"]);
+  assert.deepStrictEqual(M.wikiYears(new Date("2026-06-02T00:00:00Z"), 30, 2), ["2026"]);
+  assert.deepStrictEqual(M.wikiYears(new Date("2027-01-02T00:00:00Z"), 30, 4), ["2026", "2027"]);
+});
+
+test("tagFor gives a short tag, and falls back to the label or id", () => {
+  assert.strictEqual(M.tagFor("cw"), "CW");
+  assert.strictEqual(M.tagFor("ufc"), "UFC");
+  assert.strictEqual(M.tagFor("zzz"), "ZZZ");
+  for (const p of M.promotions) assert.ok(M.tagFor(p.id).length <= 4, p.id);
+});
+
+test("ESPN events carry their tag too", () => {
+  assert.ok(ufc.every((e) => e.orgTag === "UFC"));
+});
+
+test("ESPN events are timed and fetch their card separately", () => {
+  assert.ok(ufc.length > 0);
+  assert.ok(ufc.every((e) => e.dateOnly === false && e.inline === false));
+});
+
+test("providerOf: Cage Warriors reads Wikipedia, the others ESPN", () => {
+  assert.strictEqual(M.providerOf("cw"), "wikipedia");
+  assert.strictEqual(M.providerOf("ufc"), "espn");
+  assert.strictEqual(M.providerOf("nope"), "espn");
+});
+
+test("wikiMethod keeps how it ended and drops judges' scores", () => {
+  assert.strictEqual(M.wikiMethod("Decision (unanimous) (29–28, 29–28, 29–28)"), "Unanimous Decision");
+  assert.strictEqual(M.wikiMethod("Decision (majority) (28–28, 29–27, 29–27)"), "Majority Decision");
+  assert.strictEqual(M.wikiMethod("Draw (split) (27–29, 29–27, 28–28)"), "Split Draw");
+  assert.strictEqual(M.wikiMethod("[[Technical knockout|TKO]] (punches)"), "TKO (punches)");
+  assert.strictEqual(M.wikiMethod(""), "");
+});
+
+test("parseRecords keeps only values shaped like a record", () => {
+  const text = JSON.stringify({
+    "Nik Bagley": "10-1-0",
+    "Anderson Silva": "34-11-0 (1 NC)",
+    "Namesake": "n/a",
+    "Refused": "blocked",
+    "Bad One": "<script>",
+    "Number": 5
+  });
+  assert.deepStrictEqual(M.parseRecords(text), {
+    "Nik Bagley": "10-1-0", "Anderson Silva": "34-11-0 (1 NC)", "Namesake": "n/a", "Refused": "blocked"
+  });
+  assert.deepStrictEqual(M.parseRecords("not json"), {});
+  assert.deepStrictEqual(M.parseRecords("[]"), {});
+});
+
+test("Cage Warriors fighters start without a record and take the ones found", () => {
+  const event = cw.find((e) => e.fights.length > 0);
+  const names = M.namesNeedingRecords(event, {});
+  assert.ok(names.length >= 2);
+  assert.strictEqual(new Set(names).size, names.length);
+  assert.ok(!names.includes("TBA"));
+  assert.ok(event.fights.every((f) => f.fighters.every((x) => x.record === "")));
+
+  const filled = M.withRecords(event, { [names[0]]: "10-1-0" });
+  const got = filled.fights.flatMap((f) => f.fighters).filter((x) => x.record !== "");
+  assert.deepStrictEqual(got.map((x) => [x.name, x.record]), [[names[0], "10-1-0"]]);
+  // The original event is left alone, and a fighter already known is skipped.
+  assert.ok(event.fights.every((f) => f.fighters.every((x) => x.record === "")));
+  assert.ok(!M.namesNeedingRecords(event, { [names[0]]: "10-1-0" }).includes(names[0]));
+  // The card built from it carries the record through to the panel.
+  const card = M.buildCard(filled, {});
+  const shown = card.flatMap((s) => s.fights).flatMap((f) => f.fighters).filter((x) => x.record !== "");
+  assert.strictEqual(shown.length, 1);
+});
+
+test("once the lookup is settled, fighters still without a record are flagged", () => {
+  const event = cw.find((e) => e.fights.length > 0);
+  const [first] = M.namesNeedingRecords(event, {});
+  const flags = (e) => e.fights.flatMap((f) => f.fighters).filter((x) => x.recordMissing).map((x) => x.name);
+  const pending = (e) => e.fights.flatMap((f) => f.fighters).filter((x) => x.recordPending).map((x) => x.name);
+  assert.deepStrictEqual(flags(M.withRecords(event, {})), []);
+  // While the lookup runs everyone without a record is pending, then nobody is.
+  assert.strictEqual(pending(M.withRecords(event, {})).length, M.namesNeedingRecords(event, {}).length);
+  assert.deepStrictEqual(pending(M.withRecords(event, {}, true)), []);
+  assert.ok(!pending(M.withRecords(event, { [first]: "10-1-0" })).includes(first));
+  const settled = M.withRecords(event, { [first]: "10-1-0" }, true);
+  assert.ok(!flags(settled).includes(first));
+  assert.strictEqual(flags(settled).length, M.namesNeedingRecords(event, {}).length - 1);
+  // ESPN events are never flagged: their records come with the scoreboard.
+  assert.deepStrictEqual(flags(M.withRecords(byName(ufc, "UFC"), {}, true)), []);
+});
+
+test("a missing record is told apart: blocked by the vendor, or simply N/A", () => {
+  const event = cw.find((e) => e.fights.length > 0);
+  const [a, b, c] = M.namesNeedingRecords(event, {});
+  const settled = M.withRecords(event, { [a]: "n/a", [b]: "blocked", [c]: "10-1-0" }, true);
+  const reason = (n) => settled.fights.flatMap((f) => f.fighters).find((x) => x.name === n).recordMissing;
+  assert.strictEqual(reason(a), "na");
+  assert.strictEqual(reason(b), "blocked");
+  assert.strictEqual(reason(c), "");
+  // An unanswered name is blocked; nothing is claimed while the lookup runs.
+  const rest = M.namesNeedingRecords(event, {}).slice(3)[0];
+  assert.strictEqual(settled.fights.flatMap((f) => f.fighters).find((x) => x.name === rest).recordMissing, "blocked");
+  const running = M.withRecords(event, { [a]: "n/a", [b]: "blocked" });
+  assert.ok(running.fights.flatMap((f) => f.fighters).every((x) => !x.recordMissing));
+  // "n/a" and "blocked" are asked about again; a real record is not.
+  const again = M.namesNeedingRecords(event, { [a]: "n/a", [b]: "blocked", [c]: "10-1-0" });
+  assert.ok(again.includes(a) && again.includes(b) && !again.includes(c));
+});
+
+test("card cache keeps fresh, well-formed entries only", () => {
+  const now = 10 * 24 * 3600 * 1000;
+  const fresh = now - 3600 * 1000;
+  const stale = now - 13 * 3600 * 1000;
+  const seg = { "401": { segment: "main", label: "Main Card", matchNumber: 1, champion: true, method: "KO" } };
+  const text = M.serializeCardCache(
+    { "123": { at: fresh, data: seg }, "124": { at: stale, data: seg }, "abc": { at: fresh, data: seg } },
+    { "Nik Bagley": { at: fresh, value: "10-2-0" }, "Old Guy": { at: stale, value: "1-0-0" },
+      "Blocked": { at: fresh, value: "blocked" }, "Nobody": { at: fresh, value: "n/a" }, "Evil": { at: fresh, value: "<b>" } }
+  );
+  const back = M.parseCardCache(text, now);
+  assert.deepStrictEqual(Object.keys(back.segments), ["123"]);
+  assert.strictEqual(back.segments["123"].data["401"].champion, true);
+  assert.deepStrictEqual(Object.keys(back.records).sort(), ["Nik Bagley", "Nobody"]);
+  assert.deepStrictEqual(M.parseCardCache("junk", now), { segments: {}, records: {} });
+  assert.strictEqual(M.cardCacheFresh(now + 1000, now), false);
+});
+
+test("card cache rebuilds each entry field by field", () => {
+  const now = 10 * 24 * 3600 * 1000;
+  const at = now - 1000;
+  const text = JSON.stringify({
+    version: 1,
+    segments: { "5": { at, data: { "9": { segment: 7, label: { x: 1 }, matchNumber: "3", champion: "yes", method: "KO", extra: "<b>" }, "x": { segment: "main" }, "8": "junk" } },
+                "6": { at, data: { "x": {} } }, "7": { at, data: "junk" } },
+    records: { "A": "junk", "B": { at, value: "3-1-0 (1 NC)" }, "C": { at: "nope", value: "1-0-0" } }
+  });
+  const back = M.parseCardCache(text, now);
+  assert.deepStrictEqual(Object.keys(back.segments), ["5"]);
+  assert.deepStrictEqual(back.segments["5"].data, { "9": { segment: "7", label: "[object Object]", matchNumber: 3, champion: false, method: "KO" } });
+  assert.deepStrictEqual(Object.keys(back.records), ["B"]);
+  assert.deepStrictEqual(M.parseCardCache(JSON.stringify({ version: 2, segments: {}, records: {} }), now), { segments: {}, records: {} });
+});
+
+test("sanitizeFight bounds the billing fields it now keeps", () => {
+  const base = { id: "1", fighters: [] };
+  const clean = (extra) => M.sanitizeFight(Object.assign({}, base, extra));
+  assert.strictEqual(clean({ segment: "prelims1" }).segment, "prelims1");
+  assert.strictEqual(clean({ segment: "<script>" }).segment, "");
+  assert.strictEqual(clean({ matchNumber: 500 }).matchNumber, 99);
+  assert.strictEqual(clean({ matchNumber: -4 }).matchNumber, 0);
+  assert.strictEqual(clean({ matchNumber: "x" }).matchNumber, 0);
+  assert.strictEqual(clean({ matchNumber: 3.7 }).matchNumber, 3);
+  assert.strictEqual(clean({ champion: "true" }).champion, false);
+  assert.strictEqual(clean({ champion: true }).champion, true);
+  assert.strictEqual(clean({ method: "x".repeat(200) }).method.length, 80);
+  assert.strictEqual(clean({}).method, "");
+  assert.strictEqual(M.sanitizeFight({ id: "abc" }), null);
+});
+
+test("wikiDate reads start date templates and gives noon UTC", () => {
+  assert.strictEqual(M.wikiDate("{{start date|2026|11|7}}"), "2026-11-07T12:00:00.000Z");
+  assert.strictEqual(M.wikiDate("{{Start date | 2026 | 2 | 21 |df=y}}"), "2026-02-21T12:00:00.000Z");
+  assert.strictEqual(M.wikiDate("{{start date|2026|11|7}}<ref>x</ref>"), "2026-11-07T12:00:00.000Z");
+  assert.strictEqual(M.wikiDate("November 7, 2026"), "");
+  assert.strictEqual(M.wikiDate(""), "");
+  assert.strictEqual(M.wikiDate(undefined), "");
+});
+
+test("wikiSegment maps card headings to segments", () => {
+  assert.strictEqual(M.wikiSegment("Main card"), "main");
+  assert.strictEqual(M.wikiSegment("Preliminary card"), "prelims1");
+  assert.strictEqual(M.wikiSegment("Prelims"), "prelims1");
+  assert.strictEqual(M.wikiSegment("Early prelims"), "prelims2");
+  assert.strictEqual(M.wikiSegment("[[Prelims]] 2"), "prelims2");
+  assert.strictEqual(M.wikiSegment(""), "main");
+});
+
+test("wikiBouts splits cards and bouts in listed order", () => {
+  const text = [
+    "{{MMAevent card|Main card}}",
+    "{{MMAevent bout",
+    "| Welterweight",
+    "| A One",
+    "| def.",
+    "| B Two",
+    "| KO",
+    "}}",
+    "{{MMAevent card|Prelims}}",
+    "{{MMAevent bout",
+    "| Lightweight",
+    "| C Three",
+    "| vs.",
+    "| D Four",
+    "}}"
+  ].join("\n");
+  const bouts = M.wikiBouts(text);
+  assert.deepStrictEqual(bouts.map((b) => b.segment), ["main", "prelims1"]);
+  assert.strictEqual(bouts[0].parts[1].trim(), "A One");
+  assert.strictEqual(bouts[1].parts[3].trim(), "D Four");
+  assert.deepStrictEqual(M.wikiBouts("no templates here"), []);
+});
+
+test("wikiFighter strips links and flags champions and TBA", () => {
+  const f = M.wikiFighter(" [[Dario Bellandi]] (c) ", true);
+  assert.strictEqual(f.name, "Dario Bellandi");
+  assert.strictEqual(f.crowned, true);
+  assert.strictEqual(f.winner, true);
+  assert.strictEqual(M.wikiFighter("[[Aldo Pereira|Aldo P.]] (ic)", false).name, "Aldo P.");
+  const tba = M.wikiFighter("TBA", false);
+  assert.strictEqual(tba.tba, true);
+  assert.strictEqual(tba.name, "TBA");
+});
+
+test("buildCard: a provider's own billing is used, but ESPN segments win", () => {
+  const fight = (id, extra) => Object.assign({ id, fighters: [], rank: 0 }, extra);
+  const event = { fights: [
+    fight("1", { segment: "prelims1", matchNumber: 2, method: "KO", champion: false }),
+    fight("2", { segment: "main", matchNumber: 1, method: "Submission", champion: true })
+  ] };
+  const own = M.buildCard(event, {});
+  assert.deepStrictEqual(own.map((s) => s.key), ["main", "prelims1"]);
+  assert.strictEqual(own[0].fights[0].champion, true);
+  assert.strictEqual(own[0].fights[0].method, "Submission");
+  const espn = M.buildCard(event, { "1": { segment: "main", label: "Main Card", matchNumber: 5, champion: false, method: "Decision" } });
+  const moved = espn.flatMap((s) => s.fights.map((f) => [s.key, f.id, f.method]));
+  assert.ok(moved.some((x) => x[0] === "main" && x[1] === "1" && x[2] === "Decision"));
+});
+
+test("whenText shows the day only for date-only events", () => {
+  const e = { date: "2026-11-07T12:00:00.000Z", dateOnly: true };
+  const day = M.formatDay(e.date, "UTC");
+  assert.strictEqual(M.whenText(e, "24h", "UTC"), day);
+  const timed = M.whenText({ date: e.date, dateOnly: false }, "24h", "UTC");
+  assert.strictEqual(timed, day + " · " + M.formatTime(e.date, "24h", "UTC"));
 });

@@ -49,7 +49,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 
 | Setting | Default | |
 |---|---|---|
-| `organizations` | `["ufc"]` | Promotions to follow. Only UFC and PFL are available for now. |
+| `organizations` | `["ufc"]` | Promotions to follow: `ufc`, `pfl` or `cw` (Cage Warriors). |
 | `eventLimit` | `10` | Events in the list, 1 to 30. |
 | `lookaheadDays` | `120` | How far ahead to look. |
 | `refreshMinutes` | `180` | Background refresh interval. |
@@ -61,7 +61,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 ## Using it
 
 - Click the glove: the event list, each event with its promotion's logo. Middle-click: refresh.
-- `s` opens the settings view: tick the organizations to follow (UFC on, PFL off by default).
+- `s` opens the settings view: tick the organizations to follow (UFC on, PFL and Cage Warriors off by default).
   `↑`/`↓` move through every setting (organizations, time zone, keep days, text size);
   Space or Enter toggles an organization, `←`/`→` change the other settings, `Esc` goes back. The choice is saved to `shell.json`.
 - `↑`/`↓` move, `Enter` (or click) opens the card, `o` opens the event in your browser,
@@ -83,9 +83,35 @@ ESPN's public JSON API. It needs no key, but it is unofficial and could change.
 - Fighter `order` 1 is the champion or higher-billed fighter and 2 is the
   challenger. ESPN lists them in no fixed order, so the plugin sorts by it.
 
-Only UFC and PFL are available at the moment. Other organizations are harder to
-parse: another promotion would need a second provider beside `bin/mma-api`.
-Suggestions for getting more of them added are welcome; please open an issue.
+### Cage Warriors: Wikipedia
+
+ESPN has next to no Cage Warriors coverage, and cagewarriors.com refuses
+programmatic clients (it sits behind a bot challenge, which this plugin does not
+try to get around). So Cage Warriors comes from Wikipedia's
+"[2026 in Cage Warriors](https://en.wikipedia.org/wiki/2026_in_Cage_Warriors)"
+page, read through the MediaWiki API (`bin/mma-api wiki`). It is maintained by
+volunteers and is usually updated within hours of an announcement or a result.
+
+- Upcoming events show the card as announced so far, and finished ones the
+  full results. Unlike ESPN, the whole card arrives with the event list, so
+  opening one makes no second request for the card itself.
+- Wikipedia has no fight records, so opening a card also looks each fighter up
+  on [Sherdog](https://www.sherdog.com) (one search and one page per fighter,
+  run in parallel, kept until the app restarts). The record appears under the
+  name a moment after the card opens. A fighter is shown a record only when
+  Sherdog has exactly one fighter by that name, so namesakes and fighters it
+  does not list show none rather than a wrong one.
+- Wikipedia has dates but no start times, so these events show the day only.
+- Cards are as complete as the page: a late change may take a while to appear.
+- The event link opens its section on Wikipedia. Wikipedia text is CC BY-SA.
+
+Only UFC, PFL and Cage Warriors are available at the moment. Another promotion
+needs a provider of its own; suggestions are welcome, please open an issue.
+
+Card details (segments, and Cage Warriors fighter records, which are looked up
+as soon as the event list shows) are cached for 12 hours in
+`~/.cache/omarchy-mma/cards.json`. `r` is a hard refresh that bypasses and
+clears that cache; the background refresh and middle-click use it.
 
 Events are cached in `~/.cache/omarchy-mma/events.json` and shown when the source
 can't be reached.
@@ -96,8 +122,8 @@ can't be reached.
 tests/run
 ```
 
-Runs `Model.js` against saved ESPN responses in `tests/fixtures/` and checks
-`bin/mma-api`'s argument handling. No network or display needed.
+Runs `Model.js` against saved ESPN and Wikipedia responses in `tests/fixtures/` and
+checks `bin/mma-api`'s argument handling. No network or display needed.
 
 ## License
 

@@ -95,8 +95,7 @@ BarWidget {
     readonly property string zone: Model.knownTimeZone(root.setting("timeZone", "venue"))
     tooltipText: (root.nextEvent
       ? "Next: " + root.nextEvent.name + "\n"
-        + Model.formatDay(root.nextEvent.date, Model.effectiveZone(zone, root.nextEvent)) + " · "
-        + Model.formatTime(root.nextEvent.date, Model.knownTimeFormat(root.setting("timeFormat", "12h")), Model.effectiveZone(zone, root.nextEvent))
+        + Model.whenText(root.nextEvent, Model.knownTimeFormat(root.setting("timeFormat", "12h")), Model.effectiveZone(zone, root.nextEvent))
       : root.service && root.service.loading ? "MMA — loading events"
       : "MMA — no upcoming events")
       + "\nClick: open · Middle-click: refresh"
