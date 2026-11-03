@@ -29,19 +29,6 @@ omarchy plugin enable anavarre.mma
 omarchy-shell shell rescanPlugins
 ```
 
-## Uninstall
-
-```sh
-omarchy plugin disable anavarre.mma
-omarchy plugin remove anavarre.mma
-omarchy-shell shell rescanPlugins
-rm -rf ~/.cache/omarchy-mma
-```
-
-If you installed by hand, delete `~/.config/omarchy/plugins/anavarre.mma` instead of
-running `omarchy plugin remove`. Also remove any leftover `anavarre.mma` entry from
-`~/.config/omarchy/shell.json`.
-
 ## Settings
 
 Open the widget's settings in the Omarchy shell (or edit its entry in
@@ -124,6 +111,19 @@ tests/run
 
 Runs `Model.js` against saved ESPN and Wikipedia responses in `tests/fixtures/` and
 checks `bin/mma-api`'s argument handling. No network or display needed.
+
+## Uninstall
+
+```sh
+omarchy plugin disable anavarre.mma
+omarchy plugin remove anavarre.mma
+omarchy-shell shell rescanPlugins
+rm -rf ~/.cache/omarchy-mma
+```
+
+If you installed by hand, delete `~/.config/omarchy/plugins/anavarre.mma` instead of
+running `omarchy plugin remove`. Also remove any leftover `anavarre.mma` entry from
+`~/.config/omarchy/shell.json`.
 
 ## License
 
