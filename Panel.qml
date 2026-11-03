@@ -100,7 +100,9 @@ Panel {
   // Every event loaded, and how many of them the list shows so far: the
   // "Events to show" setting at first, then another page each time the
   // selection or the scroll reaches the end.
-  readonly property var allEvents: Model.visibleEvents(root.mma.events, root.now, root.keepFinishedDays)
+  property string query: ""
+  readonly property var allEvents: Model.filterEvents(
+    Model.visibleEvents(root.mma.events, root.now, root.keepFinishedDays), root.query)
   readonly property int pageSize: Model.clampEventLimit(root.mma.eventLimit)
   property int shownCount: root.pageSize
   readonly property var events: root.allEvents.slice(0, root.shownCount)
@@ -198,6 +200,7 @@ Panel {
     if (root.opened) {
       root.eventId = ""
       root.showSettings = false
+      root.query = ""
       root.selected = 0
       root.shownCount = root.pageSize
       listView.contentY = 0
@@ -205,6 +208,17 @@ Panel {
       if (root.service && Date.now() - root.mma.fetchedAt > 10 * 60 * 1000) root.mma.refresh()
     }
   }
+
+  onQueryChanged: {
+    root.shownCount = root.pageSize
+    root.selected = 0
+    listView.contentY = 0
+  }
+
+  // The search box only takes the keyboard when asked ("f"); every other view
+  // change hands it back to the key catcher.
+  onShowCardChanged: keys.forceActiveFocus()
+  onShowSettingsChanged: keys.forceActiveFocus()
 
   onEventsChanged: root.selected = Math.max(0, Math.min(root.events.length - 1, root.selected))
 
@@ -401,6 +415,7 @@ Panel {
           if (text === " ") root.toggleOrganization(root.settingsSelected)
           else if (text === "t") root.pickTimeZone(root.timeZone === "venue" ? "local" : "venue")
         }
+        else if (text === "f" && !root.showCard) searchField.forceActiveFocus()
         else if (text === "s") root.openSettings()
         else if (text === "r") root.mma.hardRefresh()
         else if (text === "o") {
@@ -461,6 +476,29 @@ Panel {
             : ""
         }
 
+        // ------------------------------------------------------------ search
+        TextField {
+          id: searchField
+          width: parent.width
+          visible: !root.showSettings && !root.showCard
+          foreground: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: root.fs(Style.font.body)
+          placeholderText: "Search events or fighters"
+          text: root.query
+          onTextChanged: if (root.query !== text) root.query = text
+          Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_Down) { root.moveSelection(1); event.accepted = true }
+            else if (event.key === Qt.Key_Up) { root.moveSelection(-1); event.accepted = true }
+            else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.openEvent(root.selected); event.accepted = true }
+          }
+          // Leaves the box, keeping the filter; Esc again closes the panel.
+          Keys.onEscapePressed: keys.forceActiveFocus()
+          Keys.onTabPressed: function(event) {
+            if (!root.switchPanel(event.modifiers & Qt.ShiftModifier ? -1 : 1)) event.accepted = false
+          }
+        }
+
         Text {
           width: parent.width
           visible: !root.showSettings && !root.showCard && root.events.length === 0 && !root.loading
@@ -469,7 +507,8 @@ Panel {
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: root.fs(Style.font.body)
-          text: root.organizationCount === 0
+          text: root.query.trim() !== "" ? "No event or fighter matches \u201c" + root.query.trim() + "\u201d."
+            : root.organizationCount === 0
             ? "No organization selected. Press s to pick some."
             : "No upcoming events found."
         }
@@ -1235,6 +1274,13 @@ Panel {
           Text {
             visible: !root.showSettings && (root.showCard || root.events.length > 0)
             text: "o Open"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: root.fs(Style.font.bodySmall)
+          }
+          Text {
+            visible: !root.showSettings && !root.showCard
+            text: "f Search"
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: root.fs(Style.font.bodySmall)

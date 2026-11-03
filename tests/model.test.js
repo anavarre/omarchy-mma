@@ -882,3 +882,15 @@ test("whenText shows the day only for date-only events", () => {
   const timed = M.whenText({ date: e.date, dateOnly: false }, "24h", "UTC");
   assert.strictEqual(timed, day + " · " + M.formatTime(e.date, "24h", "UTC"));
 });
+
+test("filterEvents matches event, organization and fighter names, ignoring case and accents", () => {
+  const ev = (id, name, names) => ({ id, name, shortName: name, orgLabel: "UFC",
+    fights: [{ fighters: names.map((n) => ({ name: n, shortName: n })) }] });
+  const list = [ev("a", "UFC 400", ["Jiří Procházka", "Khalil Rountree"]), ev("b", "UFC Fight Night", ["Nik Bagley"])];
+  const ids = (q) => M.filterEvents(list, q).map((e) => e.id);
+  assert.deepStrictEqual(ids("prochazka"), ["a"]);
+  assert.deepStrictEqual(ids("  BAGLEY nik "), ["b"]);
+  assert.deepStrictEqual(ids("night"), ["b"]);
+  assert.deepStrictEqual(ids("nobody"), []);
+  assert.deepStrictEqual(ids(""), ["a", "b"]);
+});

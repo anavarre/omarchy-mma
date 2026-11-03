@@ -492,6 +492,26 @@ function visibleEvents(events, now, days) {
   }))
 }
 
+// Lower-cased, accent-free text, so "jiri prochazka" finds "Jiří Procházka".
+function searchText(s) {
+  return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+}
+
+// The events that match a search: every word typed has to appear in the
+// event's name, its organization or the name of one of its fighters.
+function filterEvents(events, query) {
+  var words = searchText(query).split(/\s+/).filter(function(w) { return w !== "" })
+  if (words.length === 0) return events
+  return events.filter(function(e) {
+    var parts = [e.name, e.shortName, e.orgLabel]
+    list(e.fights).forEach(function(f) {
+      list(f && f.fighters).forEach(function(x) { if (x) parts.push(x.name, x.shortName) })
+    })
+    var hay = searchText(parts.join(" "))
+    return words.every(function(w) { return hay.indexOf(w) >= 0 })
+  })
+}
+
 // The soonest event still to come, if any.
 function nextEvent(events) {
   for (var i = 0; i < events.length; i++) if (events[i].finished !== true) return events[i]
