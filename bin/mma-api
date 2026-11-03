@@ -10,10 +10,11 @@
 #       An id written with a trailing "+" (finished fight) also adds that
 #       fight's status object, which names how it was won (KO, decision...).
 #
-#   mma-api wiki <year>...
+#   mma-api wiki <cw|ksw> <year>...
 #       Cage Warriors has no ESPN coverage worth using and its own site sits
-#       behind a bot challenge, so its schedule and cards come from Wikipedia's
-#       "<year> in Cage Warriors" pages, fetched through the MediaWiki API. A JSON
+#       behind a bot challenge; ESPN's KSW feed stops in December 2024. So their
+#       schedules and cards come from Wikipedia's "<year> in Cage Warriors" and
+#       "<year> in Konfrontacja Sztuk Walki" pages, fetched through the MediaWiki API. A JSON
 #       array of the API's answers, one per year; years whose request fails are
 #       left out, and it exits 1 when none came through. Model.js reads the wikitext.
 #
@@ -157,13 +158,19 @@ case "$cmd" in
     printf ']'
     ;;
   wiki)
-    [ $# -ge 1 ] && [ $# -le 4 ] || die "usage: wiki <year>..."
+    [ $# -ge 2 ] && [ $# -le 5 ] || die "usage: wiki <cw|ksw> <year>..."
+    case "$1" in
+      cw) wiki_page=Cage_Warriors ;;
+      ksw) wiki_page=Konfrontacja_Sztuk_Walki ;;
+      *) die "bad organization" ;;
+    esac
+    shift
     for y in "$@"; do [[ $y =~ ^20[0-9]{2}$ ]] || die "bad year"; done
     printf '['
     sep=""
     ok=0
     for y in "$@"; do
-      out=$(fetch "$WIKI_API?action=parse&page=${y}_in_Cage_Warriors&prop=wikitext&redirects=1&format=json&formatversion=2" "$WIKI_UA" 2> /dev/null) || continue
+      out=$(fetch "$WIKI_API?action=parse&page=${y}_in_${wiki_page}&prop=wikitext&redirects=1&format=json&formatversion=2" "$WIKI_UA" 2> /dev/null) || continue
       [ -n "$out" ] || continue
       printf '%s%s' "$sep" "$out"
       sep=","

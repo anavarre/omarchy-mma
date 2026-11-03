@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Io
 import "Model.js" as Model
 
-// The one process-wide owner of everything fetched (ESPN, and Wikipedia for Cage Warriors): the event list,
+// The one process-wide owner of everything fetched (ESPN, and Wikipedia for Cage Warriors and KSW): the event list,
 // per-event cards and the refresh timer. The bar widget exists once per
 // monitor; they all read this instead of polling on their own.
 Item {
@@ -97,7 +97,7 @@ Item {
     var days = Model.snapLookaheadDays(root.lookaheadDays)
     var back = root.keepFinishedDays + 1
     eventsProcess.command = Model.providerOf(org) === "wikipedia"
-      ? ["/usr/bin/bash", root.api, "wiki"].concat(Model.wikiYears(now, days, back))
+      ? ["/usr/bin/bash", root.api, "wiki", org].concat(Model.wikiYears(now, days, back))
       : ["/usr/bin/bash", root.api, "events", promo.slug, Model.dateRange(now, days, back)]
     eventsProcess.running = true
   }
@@ -122,7 +122,7 @@ Item {
     // soonest event's now rather than when the panel opens.
     var next = Model.nextEvent(root.events)
     if (next) root.loadCard(next.id)
-    // Cage Warriors' cards carry no records, so look them up now rather than
+    // Wikipedia's cards carry no records, so look them up now rather than
     // when an event is opened: they are ready by the time it is viewed.
     root.events.forEach(function(e) { if (e.inline === true) root.loadCard(e.id) })
   }

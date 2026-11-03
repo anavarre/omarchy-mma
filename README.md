@@ -36,7 +36,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 
 | Setting | Default | |
 |---|---|---|
-| `organizations` | `["ufc"]` | Promotions to follow: `ufc`, `pfl` or `cw` (Cage Warriors). |
+| `organizations` | `["ufc"]` | Promotions to follow: `ufc`, `pfl`, `cw` (Cage Warriors) or `ksw`. |
 | `eventLimit` | `10` | Events listed at first, 1 to 30. More load as you scroll or arrow down. |
 | `lookaheadDays` | `120` | How far ahead to look. |
 | `refreshMinutes` | `180` | Background refresh interval. |
@@ -48,7 +48,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 ## Using it
 
 - Click the glove: the event list, each event with its promotion's logo. Middle-click: refresh.
-- `s` opens the settings view: tick the organizations to follow (UFC on, PFL and Cage Warriors off by default).
+- `s` opens the settings view: tick the organizations to follow (UFC on, the others off by default).
   `↑`/`↓` move through every setting (organizations, time zone, keep days, text size);
   Space or Enter toggles an organization, `←`/`→` change the other settings, `Esc` goes back. The choice is saved to `shell.json`.
 - `↑`/`↓` move, `Enter` (or click) opens the card, `o` opens the event in your browser,
@@ -70,14 +70,17 @@ ESPN's public JSON API. It needs no key, but it is unofficial and could change.
 - Fighter `order` 1 is the champion or higher-billed fighter and 2 is the
   challenger. ESPN lists them in no fixed order, so the plugin sorts by it.
 
-### Cage Warriors: Wikipedia
+### Cage Warriors and KSW: Wikipedia
 
 ESPN has next to no Cage Warriors coverage, and cagewarriors.com refuses
 programmatic clients (it sits behind a bot challenge, which this plugin does not
-try to get around). So Cage Warriors comes from Wikipedia's
-"[2026 in Cage Warriors](https://en.wikipedia.org/wiki/2026_in_Cage_Warriors)"
-page, read through the MediaWiki API (`bin/mma-api wiki`). It is maintained by
-volunteers and is usually updated within hours of an announcement or a result.
+try to get around). ESPN does list KSW (Konfrontacja Sztuk Walki), but its feed
+stops in December 2024. So both come from Wikipedia's
+"[2026 in Cage Warriors](https://en.wikipedia.org/wiki/2026_in_Cage_Warriors)" and
+"[2026 in Konfrontacja Sztuk Walki](https://en.wikipedia.org/wiki/2026_in_Konfrontacja_Sztuk_Walki)"
+pages, read through the MediaWiki API (`bin/mma-api wiki cw|ksw`). They are maintained by
+volunteers and are usually updated within hours of an announcement or a result.
+No key or account is needed.
 
 - Upcoming events show the card as announced so far, and finished ones the
   full results. Unlike ESPN, the whole card arrives with the event list, so
@@ -92,10 +95,10 @@ volunteers and is usually updated within hours of an announcement or a result.
 - Cards are as complete as the page: a late change may take a while to appear.
 - The event link opens its section on Wikipedia. Wikipedia text is CC BY-SA.
 
-Only UFC, PFL and Cage Warriors are available at the moment. Another promotion
+Only UFC, PFL, Cage Warriors and KSW are available at the moment. Another promotion
 needs a provider of its own; suggestions are welcome, please open an issue.
 
-Card details (segments, and Cage Warriors fighter records, which are looked up
+Card details (segments, and Cage Warriors and KSW fighter records, which are looked up
 as soon as the event list shows) are cached for 12 hours in
 `~/.cache/omarchy-mma/cards.json`. `r` is a hard refresh that bypasses and
 clears that cache; the background refresh and middle-click use it.

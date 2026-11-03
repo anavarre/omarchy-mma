@@ -23,7 +23,8 @@
       "ufc",
       "pfl",
       "fights",
-      "cagewarriors"
+      "cagewarriors",
+      "ksw"
     ],
     "allowMultiple": false,
     "defaultSection": "right",
@@ -45,7 +46,7 @@
         "key": "organizations",
         "type": "multiselect",
         "label": "Organizations",
-        "description": "Which promotions to show events for. UFC, PFL and Cage Warriors are available.",
+        "description": "Which promotions to show events for. UFC, PFL, Cage Warriors and KSW are available.",
         "noSelectionText": "None selected",
         "placeholderText": "Search organizations...",
         "emptyText": "No organizations",
@@ -64,6 +65,11 @@
             "value": "cw",
             "label": "Cage Warriors",
             "description": "Cage Warriors Fighting Championship"
+          },
+          {
+            "value": "ksw",
+            "label": "KSW",
+            "description": "Konfrontacja Sztuk Walki"
           }
         ],
         "defaultValue": [

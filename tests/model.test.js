@@ -57,9 +57,9 @@ test("forOrganizations keeps only selected promotions' events", () => {
   assert.deepStrictEqual(M.forOrganizations(events, []), []);
 });
 
-test("organizationOptions lists UFC, PFL and Cage Warriors", () => {
+test("organizationOptions lists UFC, PFL, Cage Warriors and KSW", () => {
   const ids = M.organizationOptions().map((o) => o.value);
-  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw"]);
+  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw", "ksw"]);
 });
 
 test("setting clamps", () => {
@@ -353,7 +353,7 @@ test("a tampered cache cannot smuggle URLs, logos, or shell arguments", () => {
   badUrl.fights[1].fighters = "nope";
   badUrl.fights.push("junk", null, { id: "7" });
   const unknownOrg = JSON.parse(JSON.stringify(ufc[0]));
-  unknownOrg.org = "ksw";
+  unknownOrg.org = "zzz";
   const cached = M.parseCache(M.serializeCache([good, evil, badUrl, unknownOrg, "x", null, 7], 1)).events;
   assert.strictEqual(cached.length, 2);
   assert.deepStrictEqual(cached[0], ufc[0]);
@@ -613,6 +613,41 @@ test("Cage Warriors: events survive the cache with their card and no extra trust
   assert.deepStrictEqual(M.buildCard(back[10], {}), M.buildCard(cw[10], {}));
 });
 
+// ------------------------------------------------------------ KSW (Wikipedia)
+
+const kswAnswers = JSON.stringify([JSON.parse(fixture("ksw-2026-wiki.json")), { error: { code: "missingtitle" } }]);
+const ksw = M.parseWikipedia(kswAnswers, "ksw", NOW, 120);
+
+test("KSW: the year's events are read from plain-text dates, in order", () => {
+  assert.strictEqual(ksw.length, 11);
+  assert.strictEqual(ksw[0].shortName, "KSW 114");
+  assert.strictEqual(ksw[0].date, "2026-01-17T12:00:00.000Z");
+  assert.strictEqual(ksw[10].name, "XTB KSW 124: Pawlak vs. Kuberski");
+  assert.ok(ksw.every((e) => e.org === "ksw" && e.orgTag === "KSW" && e.inline && e.dateOnly && e.tz === "Europe/Paris"));
+  assert.ok(ksw.slice(0, 9).every((e) => e.finished) && !ksw[9].finished && !ksw[10].finished);
+});
+
+test("KSW: an announced card has its title fights and no result", () => {
+  const e = ksw[10];
+  assert.strictEqual(e.venue, "Gliwice Arena · Gliwice, Poland");
+  assert.strictEqual(e.headliner.champion, true);
+  assert.deepStrictEqual(e.headliner.fighters.map((f) => f.name), ["Paweł Pawlak", "Piotr Kuberski"]);
+  assert.ok(e.fights.every((f) => !f.done && f.method === ""));
+});
+
+test("KSW and Cage Warriors never share an event id", () => {
+  const ids = new Set(cw.map((e) => e.id));
+  assert.ok(ksw.every((e) => /^[0-9]+$/.test(e.id) && !ids.has(e.id)));
+});
+
+test("wikiDate reads the template and both plain-text forms, and rejects nonsense", () => {
+  const iso = "2026-11-21T12:00:00.000Z";
+  assert.strictEqual(M.wikiDate("{{start date|2026|11|21}}"), iso);
+  assert.strictEqual(M.wikiDate("November 21, 2026"), iso);
+  assert.strictEqual(M.wikiDate(" 21 November 2026 "), iso);
+  for (const bad of ["", "TBA", "Smarch 3, 2026", "February 31, 2026"]) assert.strictEqual(M.wikiDate(bad), "");
+});
+
 test("wikiYears covers the window, a year boundary included", () => {
   assert.deepStrictEqual(M.wikiYears(new Date("2026-11-02T00:00:00Z"), 120, 2), ["2026", "2027"]);
   assert.deepStrictEqual(M.wikiYears(new Date("2026-06-02T00:00:00Z"), 30, 2), ["2026"]);
@@ -635,8 +670,9 @@ test("ESPN events are timed and fetch their card separately", () => {
   assert.ok(ufc.every((e) => e.dateOnly === false && e.inline === false));
 });
 
-test("providerOf: Cage Warriors reads Wikipedia, the others ESPN", () => {
+test("providerOf: Cage Warriors and KSW read Wikipedia, the others ESPN", () => {
   assert.strictEqual(M.providerOf("cw"), "wikipedia");
+  assert.strictEqual(M.providerOf("ksw"), "wikipedia");
   assert.strictEqual(M.providerOf("ufc"), "espn");
   assert.strictEqual(M.providerOf("nope"), "espn");
 });
@@ -774,7 +810,7 @@ test("wikiDate reads start date templates and gives noon UTC", () => {
   assert.strictEqual(M.wikiDate("{{start date|2026|11|7}}"), "2026-11-07T12:00:00.000Z");
   assert.strictEqual(M.wikiDate("{{Start date | 2026 | 2 | 21 |df=y}}"), "2026-02-21T12:00:00.000Z");
   assert.strictEqual(M.wikiDate("{{start date|2026|11|7}}<ref>x</ref>"), "2026-11-07T12:00:00.000Z");
-  assert.strictEqual(M.wikiDate("November 7, 2026"), "");
+  assert.strictEqual(M.wikiDate("November 7, 2026"), "2026-11-07T12:00:00.000Z");
   assert.strictEqual(M.wikiDate(""), "");
   assert.strictEqual(M.wikiDate(undefined), "");
 });

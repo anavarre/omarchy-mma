@@ -8,7 +8,8 @@
 var promotions = [
   { id: "ufc", label: "UFC", slug: "ufc", enabled: true, logo: "assets/ufc.png", description: "Ultimate Fighting Championship" },
   { id: "pfl", label: "PFL", slug: "pfl", enabled: true, logo: "assets/pfl.png", description: "Professional Fighters League" },
-  { id: "cw", label: "Cage Warriors", slug: "cage-warriors", enabled: true, logo: "", tag: "CW", provider: "wikipedia", description: "Cage Warriors Fighting Championship" }
+  { id: "cw", label: "Cage Warriors", slug: "cage-warriors", enabled: true, logo: "", tag: "CW", provider: "wikipedia", wikiPage: "Cage_Warriors", idBase: 8000000, description: "Cage Warriors Fighting Championship" },
+  { id: "ksw", label: "KSW", slug: "ksw", enabled: true, logo: "", tag: "KSW", provider: "wikipedia", wikiPage: "Konfrontacja_Sztuk_Walki", idBase: 8300000, description: "Konfrontacja Sztuk Walki" }
 ]
 
 var defaultOrganizations = ["ufc"]
@@ -749,7 +750,8 @@ function withRecords(event, records, settled) {
 //
 // Cage Warriors has no usable ESPN coverage and its own site refuses
 // programmatic clients, so its events come from Wikipedia's "<year> in Cage
-// Warriors" pages (bin/mma-api wiki). Each event is a section holding an
+// Warriors" pages (bin/mma-api wiki cw). KSW does the same: ESPN's KSW feed
+// stops at December 2024. Each event is a section holding an
 // infobox (date, venue, city) and a card of {{MMAevent bout}} templates, with
 // results filled in after the fact. The pages have dates but no start times,
 // so these events are `dateOnly`, and they carry their whole card (`inline`):
@@ -760,7 +762,7 @@ function providerOf(orgId) {
   return p && p.provider ? p.provider : "espn"
 }
 
-// Years whose "<year> in Cage Warriors" pages cover the window: from `back`
+// Years whose "<year> in ..." pages cover the window: from `back`
 // days ago to `days` days ahead.
 function wikiYears(now, days, back) {
   var from = new Date(now.getTime() - (back > 0 ? back : 1) * 86400000).getUTCFullYear()
@@ -858,11 +860,21 @@ function wikiFight(b, index) {
 
 // "{{start date|2026|11|7}}" or "{{Start date|2026|2|21|...}}" -> noon UTC of
 // that day, so every time zone shows the right date; "" when unreadable.
+var monthNames = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+
+// Also reads the plain "November 21, 2026" and "21 November 2026" some pages
+// (KSW's) write instead of the template.
 function wikiDate(text) {
+  var t = wikiPlain(text)
+  var y, mo, day
   var m = /\{\{\s*start date\s*\|\s*(\d{4})\s*\|\s*(\d{1,2})\s*\|\s*(\d{1,2})/i.exec(str(text))
-  if (!m) return ""
-  var d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12))
-  return isNaN(d.getTime()) ? "" : d.toISOString()
+  if (m) { y = Number(m[1]); mo = Number(m[2]) - 1; day = Number(m[3]) }
+  else if ((m = /^([A-Za-z]+)\.? (\d{1,2}),? (\d{4})/.exec(t))) { mo = monthNames.indexOf(m[1].toLowerCase()); y = Number(m[3]); day = Number(m[2]) }
+  else if ((m = /^(\d{1,2}) ([A-Za-z]+),? (\d{4})/.exec(t))) { mo = monthNames.indexOf(m[2].toLowerCase()); y = Number(m[3]); day = Number(m[1]) }
+  else return ""
+  if (mo < 0 || mo > 11 || day < 1 || day > 31) return ""
+  var d = new Date(Date.UTC(y, mo, day, 12))
+  return isNaN(d.getTime()) || d.getUTCMonth() !== mo ? "" : d.toISOString()
 }
 
 function infoboxField(box, key) {
@@ -899,7 +911,8 @@ function parseWikipedia(text, orgId, now, days) {
       // The listed order has the main event first; the model wants it last.
       var fights = bouts.map(wikiFight).reverse()
       var number = /(\d+)/.exec(heading)
-      var id = number ? String(8000000 + Number(number[1])) : String(8100000 + (new Date(date).getUTCFullYear() % 100) * 1000 + i)
+      var base = promo && promo.idBase ? promo.idBase : 8000000
+      var id = number ? String(base + Number(number[1])) : String(base + 100000 + (new Date(date).getUTCFullYear() % 100) * 1000 + i)
       var name = wikiPlain(infoboxField(box[0], "name")) || heading
       var city = wikiPlain(infoboxField(box[0], "city"))
       var country = city.indexOf(",") >= 0 ? city.split(",").pop().trim() : city
@@ -908,7 +921,7 @@ function parseWikipedia(text, orgId, now, days) {
       var finished = allDone || nowMs - startMs > eventLengthMs + 12 * 3600 * 1000
       if (!finished && days !== undefined && startMs - nowMs > days * 86400000) return
       var fightCount = fights.length
-      var short = /^(Cage Warriors \d+)/.exec(name)
+      var short = /^(?:XTB )?((?:Cage Warriors|KSW) \d+)/.exec(name)
       out.push({
         id: id,
         org: orgId,
