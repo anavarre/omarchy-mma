@@ -537,7 +537,7 @@ test("Cage Warriors: event details and time zone", () => {
   assert.strictEqual(e.tz, "Europe/Paris");
   assert.strictEqual(e.url, "https://en.wikipedia.org/wiki/2026_in_Cage_Warriors#Cage_Warriors_211");
   assert.strictEqual(cwEvent(213).tz, "Europe/London");
-  assert.strictEqual(e.logo, "");
+  assert.strictEqual(e.logo, "assets/cw.png");
   assert.strictEqual(e.orgLabel, "Cage Warriors");
   // The logo slot is a small square: the tag must be short enough to fit it.
   assert.strictEqual(e.orgTag, "CW");

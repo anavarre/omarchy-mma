@@ -55,7 +55,8 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
   `r` refreshes, `Esc` goes back, then closes.
 - On a card, `↑`/`↓` scroll and `←` goes back.
 
-Logos are ESPN's league logos for UFC and PFL, bundled in `assets/`; they remain the
+Logos are ESPN's league logos for UFC and PFL, and the Wikipedia logos for Cage Warriors
+(emblem only, on a dark tile) and KSW, bundled in `assets/`; they remain the
 property of their owners.
 
 ## Where the data comes from
