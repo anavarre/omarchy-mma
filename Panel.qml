@@ -129,9 +129,34 @@ Panel {
   readonly property var card: root.showCard ? root.mma.cardFor(root.eventId) : null
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
-  readonly property color dim: Color.muted
   readonly property color accent: Color.accent
   readonly property color urgent: bar ? bar.urgent : Color.urgent
+
+  // Themes pick muted/accent/green for looks, not for legibility on every
+  // surface. Text colors are therefore nudged toward a pole (foreground, or
+  // black/white) until they reach a readable contrast against the worst
+  // surface they sit on: the panel background, or a selected row's tint.
+  function luminance(c) {
+    function lin(v) { return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
+    return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+  }
+  function contrast(a, b) {
+    var la = root.luminance(a), lb = root.luminance(b)
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+  }
+  function readable(c, pole, ratio) {
+    for (var t = 0; t <= 1.0001; t += 0.05) {
+      var m = Qt.tint(c, Qt.alpha(pole, t))
+      if (root.contrast(m, root.surface) >= ratio && root.contrast(m, root.surfaceSelected) >= ratio) return m
+    }
+    return pole
+  }
+  readonly property color surface: Color.background
+  readonly property color surfaceSelected: Qt.tint(Color.background, Qt.alpha(Color.accent, 0.18))
+  readonly property color pole: root.contrast("#000000", root.surface) > root.contrast("#ffffff", root.surface) ? "#000000" : "#ffffff"
+  readonly property color dim: root.readable(Color.muted, root.foreground, 4.5)
+  readonly property color good: root.readable("#2ea043", root.pole, 4.5)
+  readonly property color accentText: root.readable(Color.accent, root.foreground, 4.5)
 
   // Text size is offered as named sizes; every font size in the panel is
   // scaled by the matching factor.
@@ -481,6 +506,16 @@ Panel {
                 radius: Style.space(6)
                 color: row.index === root.selected ? Qt.alpha(root.accent, 0.18) : "transparent"
 
+                Rectangle {
+                  visible: row.index === root.selected
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(3)
+                  height: parent.height - Style.space(12)
+                  radius: width / 2
+                  color: root.accent
+                }
+
                 // The promotion's logo, or a text tag when it has none.
                 Item {
                   id: tag
@@ -556,7 +591,7 @@ Panel {
                       anchors.verticalCenter: rowName.verticalCenter
                       visible: row.modelData.finished === true
                       text: "\u2713"
-                      color: "#2ea043"
+                      color: root.good
                       font.family: root.fontFamily
                       font.pixelSize: root.fs(Style.font.body)
                       font.bold: true
@@ -1034,7 +1069,7 @@ Panel {
                     anchors.verticalCenter: parent.verticalCenter
                     textFormat: Text.PlainText
                     text: section.modelData.label.toUpperCase()
-                    color: root.accent
+                    color: root.accentText
                     font.family: root.fontFamily
                     font.pixelSize: root.fs(Style.font.bodySmall)
                     font.bold: true
@@ -1090,16 +1125,17 @@ Panel {
                           id: leftSide
                           anchors.left: parent.left
                           width: bout.sideWidth
-                          opacity: root.outcomeOf(bout.modelData, 0) === "loss" ? 0.5 : 1
                           Text {
                             width: parent.width
                             elide: Text.ElideRight
                             textFormat: Text.PlainText
                             text: (root.outcomeOf(bout.modelData, 0) === "win" ? "✓ " : "") + bout.modelData.fighters[0].name
-                            color: root.outcomeOf(bout.modelData, 0) === "win" ? "#2ea043" : (bout.modelData.fighters[0].tba ? root.dim : root.foreground)
+                            color: root.outcomeOf(bout.modelData, 0) === "win" ? root.good : (bout.modelData.fighters[0].tba ? root.dim : root.foreground)
                             font.family: root.fontFamily
                             font.pixelSize: root.fs(Style.font.body)
                             font.bold: !bout.modelData.fighters[0].tba
+                            // Losers fade, but only the name: the record stays legible.
+                            opacity: root.outcomeOf(bout.modelData, 0) === "loss" ? 0.65 : 1
                           }
                           RecordLine {
                             width: parent.width
@@ -1126,17 +1162,18 @@ Panel {
                           id: rightSide
                           anchors.right: parent.right
                           width: bout.sideWidth
-                          opacity: root.outcomeOf(bout.modelData, 1) === "loss" ? 0.5 : 1
                           Text {
                             width: parent.width
                             horizontalAlignment: Text.AlignRight
                             elide: Text.ElideRight
                             textFormat: Text.PlainText
                             text: bout.modelData.fighters[1].name + (root.outcomeOf(bout.modelData, 1) === "win" ? " ✓" : "")
-                            color: root.outcomeOf(bout.modelData, 1) === "win" ? "#2ea043" : (bout.modelData.fighters[1].tba ? root.dim : root.foreground)
+                            color: root.outcomeOf(bout.modelData, 1) === "win" ? root.good : (bout.modelData.fighters[1].tba ? root.dim : root.foreground)
                             font.family: root.fontFamily
                             font.pixelSize: root.fs(Style.font.body)
                             font.bold: !bout.modelData.fighters[1].tba
+                            // Losers fade, but only the name: the record stays legible.
+                            opacity: root.outcomeOf(bout.modelData, 1) === "loss" ? 0.65 : 1
                           }
                           RecordLine {
                             width: parent.width
