@@ -14,13 +14,13 @@ Once a fight is over, the winner gets a green check, the loser is dimmed, and th
 - A Nerd Font in the bar (the glyph is `nf-md-boxing_glove`, U+F0B65)
 - For the tests only: `node`
 
-## Install
+## Recommended install
 
 ```sh
 omarchy plugin add https://github.com/anavarre/omarchy-mma.git --enable
 ```
 
-## Manual install
+## Manual install for local development
 
 ```sh
 git clone https://github.com/anavarre/omarchy-mma ~/.config/omarchy/plugins/anavarre.mma
