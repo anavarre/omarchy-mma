@@ -97,7 +97,17 @@ Panel {
     running: root.opened
     onTriggered: root.now = Date.now()
   }
-  readonly property var events: Model.visibleEvents(root.mma.events, root.now, root.keepFinishedDays)
+  // Every event loaded, and how many of them the list shows so far: the
+  // "Events to show" setting at first, then another page each time the
+  // selection or the scroll reaches the end.
+  readonly property var allEvents: Model.visibleEvents(root.mma.events, root.now, root.keepFinishedDays)
+  readonly property int pageSize: Model.clampEventLimit(root.mma.eventLimit)
+  property int shownCount: root.pageSize
+  readonly property var events: root.allEvents.slice(0, root.shownCount)
+  readonly property bool hasMore: root.allEvents.length > root.shownCount
+  function showMore() {
+    if (root.hasMore) root.shownCount += root.pageSize
+  }
   readonly property bool loading: root.mma.loading === true
   readonly property bool offline: root.mma.offline === true
   readonly property string errorText: root.mma.errorText
@@ -164,6 +174,7 @@ Panel {
       root.eventId = ""
       root.showSettings = false
       root.selected = 0
+      root.shownCount = root.pageSize
       listView.contentY = 0
       // Opening the panel is cheap; refetching on every open is not.
       if (root.service && Date.now() - root.mma.fetchedAt > 10 * 60 * 1000) root.mma.refresh()
@@ -174,6 +185,7 @@ Panel {
 
   function moveSelection(dy) {
     if (root.events.length === 0) return
+    if (dy > 0 && root.selected + dy >= root.events.length - 1) root.showMore()
     root.selected = Math.max(0, Math.min(root.events.length - 1, root.selected + dy))
   }
 
@@ -447,6 +459,9 @@ Panel {
           contentHeight: listColumn.implicitHeight
           clip: true
           boundsBehavior: Flickable.StopAtBounds
+          onContentYChanged: {
+            if (root.hasMore && contentY + height >= contentHeight - Style.space(40)) root.showMore()
+          }
 
           Column {
             id: listColumn
@@ -577,6 +592,27 @@ Panel {
                 }
               }
             }
+          }
+        }
+
+        // A gently bobbing chevron while more events wait below the fold.
+        Text {
+          id: moreHint
+          readonly property bool moreBelow: root.hasMore
+            || listView.contentY + listView.height < listView.contentHeight - 2
+          visible: listView.visible && moreBelow
+          width: parent.width
+          horizontalAlignment: Text.AlignHCenter
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: root.fs(Style.font.body)
+          // nf-fa-angle_down (U+F107)
+          text: "\uf107"
+          SequentialAnimation on opacity {
+            running: moreHint.visible && root.opened
+            loops: Animation.Infinite
+            NumberAnimation { from: 0.25; to: 0.9; duration: 900; easing.type: Easing.InOutSine }
+            NumberAnimation { from: 0.9; to: 0.25; duration: 900; easing.type: Easing.InOutSine }
           }
         }
 

@@ -497,12 +497,14 @@ function nextEvent(events) {
   return null
 }
 
-// Several organizations' events merged into one list, limited. Finished events
-// older than `days` are left out first, so they never use up the limit.
+// Several organizations' events merged into one list, limited (Infinity keeps
+// them all). Finished events older than `days` are left out first, so they
+// never use up the limit.
 function mergeEvents(lists, limit, now, days) {
   var all = []
   lists.forEach(function(l) { all = all.concat(l) })
-  return visibleEvents(all, now === undefined ? Date.now() : now, days).slice(0, clampEventLimit(limit))
+  var events = visibleEvents(all, now === undefined ? Date.now() : now, days)
+  return limit === Infinity ? events : events.slice(0, clampEventLimit(limit))
 }
 
 // Title fights carry a "types" entry such as "UFC Heavyweight Title". There is

@@ -135,7 +135,7 @@ Item {
     var lists = []
     for (var i = 0; i < selected.length; i++)
       if (root.byOrg[selected[i]]) lists.push(root.byOrg[selected[i]])
-    root.events = Model.mergeEvents(lists, root.eventLimit, Date.now(), root.keepFinishedDays)
+    root.events = Model.mergeEvents(lists, Infinity, Date.now(), root.keepFinishedDays)
   }
 
   function eventById(id) {

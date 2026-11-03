@@ -50,7 +50,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 | Setting | Default | |
 |---|---|---|
 | `organizations` | `["ufc"]` | Promotions to follow: `ufc`, `pfl` or `cw` (Cage Warriors). |
-| `eventLimit` | `10` | Events in the list, 1 to 30. |
+| `eventLimit` | `10` | Events listed at first, 1 to 30. More load as you scroll or arrow down. |
 | `lookaheadDays` | `120` | How far ahead to look. |
 | `refreshMinutes` | `180` | Background refresh interval. |
 | `timeFormat` | `12h` | `12h` or `24h`. |

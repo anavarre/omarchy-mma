@@ -78,7 +78,7 @@
         "max": 30,
         "step": 1,
         "defaultValue": 10,
-        "description": "How many upcoming events the panel lists, 1 to 30."
+        "description": "How many events the panel lists at first, 1 to 30. Scroll or press down for more."
       },
       {
         "key": "lookaheadDays",
