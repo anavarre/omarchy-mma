@@ -54,6 +54,7 @@ Item {
   // When each kept answer was fetched, for the 12-hour card cache on disk:
   // segments by event id ({ at, data }), and the time of each record.
   property var segmentCache: ({})
+  property var blockedAt: ({})
   property var recordTimes: ({})
 
   onOrganizationsChanged: if (root.organizations !== null) refreshSoon()
@@ -122,9 +123,8 @@ Item {
     // soonest event's now rather than when the panel opens.
     var next = Model.nextEvent(root.events)
     if (next) root.loadCard(next.id)
-    // Wikipedia's cards carry no records, so look them up now rather than
-    // when an event is opened: they are ready by the time it is viewed.
-    root.events.forEach(function(e) { if (e.inline === true) root.loadCard(e.id) })
+    // Wikipedia's cards carry no records; those are looked up when a card is
+    // opened (or is the next event), never for every event a refresh brings.
   }
 
   function merge() {
@@ -160,8 +160,10 @@ Item {
       // Fighters without a record spin until the lookup answers; with nothing
       // to look up the card is final already.
       var names = Model.namesNeedingRecords(event, root.records).filter(function(n) { return !root.knownNa(n) })
-      root.setCard(id, Model.buildCard(Model.withRecords(event, root.records, names.length === 0), {}), "", true)
-      root.queueRecords(event, names)
+      var dropped = root.queueRecords(event, names)
+      // A card whose lookups did not fit the budget stays unsettled, so
+      // opening it again asks again.
+      root.setCard(id, Model.buildCard(Model.withRecords(event, root.records, names.length === 0), {}), "", dropped.length === 0)
       return
     }
     var kept = root.segmentCache[id]
@@ -179,6 +181,7 @@ Item {
 
   // A fighter Sherdog has no record for, asked about within the cache window.
   function knownNa(name) {
+    if (root.records[name] === "blocked") return Date.now() - (root.blockedAt[name] || 0) < Model.blockedRetryMs
     return root.records[name] === "n/a" && Model.cardCacheFresh(root.recordTimes[name], Date.now())
   }
 
@@ -195,14 +198,21 @@ Item {
   // Looks up the records of the fighters on an inline card that still have
   // none. The card is already on screen; it is rebuilt when they arrive.
   function queueRecords(event, names) {
-    if (names.length === 0) return
-    recordQueue.push({ id: event.id, event: event, names: names })
+    if (names.length === 0) return []
+    var dropped = Model.enqueueRecords(root.recordQueue, recordsProcess.running ? recordsProcess.job : null, event, names, Model.recordQueueBudget)
     root.nextRecords()
+    return dropped
   }
 
   function nextRecords() {
-    if (recordsProcess.running || root.recordQueue.length === 0) return
-    var job = root.recordQueue.shift()
+    if (recordsProcess.running) return
+    // Jobs whose cards were forgotten meanwhile are stale: skip them.
+    var job = null
+    while (root.recordQueue.length > 0 && !job) {
+      var next = root.recordQueue.shift()
+      if (next.events.some(function(e) { return root.cards[e.id] !== undefined })) job = next
+    }
+    if (!job) return
     recordsProcess.job = job
     recordsProcess.command = ["/usr/bin/bash", root.api, "records"].concat(job.names)
     recordsProcess.running = true
@@ -217,12 +227,13 @@ Item {
 
   // Cards are rebuilt after a refresh, from the one-day cache where it holds
   // them: lineups change, but not by the hour.
-  function forgetCards() { root.cards = ({}) }
+  function forgetCards() { root.recordQueue = []; root.cards = ({}) }
 
   // The r key: forget everything kept, on disk too, and fetch it all again.
   function hardRefresh() {
     root.segmentCache = ({})
     root.recordTimes = ({})
+    root.blockedAt = ({})
     root.records = ({})
     root.recordQueue = []
     root.forgetCards()
@@ -325,7 +336,7 @@ Item {
         if (ok) {
           var kept = root.segmentCache
           kept[job.id] = { at: Date.now(), data: segments }
-          root.segmentCache = kept
+          root.segmentCache = Model.newestEntries(kept, Model.cacheSegmentMax, function(k, v) { return v.at })
           root.saveCache()
         }
       }
@@ -354,16 +365,26 @@ Item {
           for (var k in root.records) all[k] = root.records[k]
           var times = {}
           for (var t in root.recordTimes) times[t] = root.recordTimes[t]
+          var blocked = {}
+          for (var b in root.blockedAt) blocked[b] = root.blockedAt[b]
           for (var n in found) {
             all[n] = found[n]
-            if (found[n] !== "blocked") times[n] = Date.now()
+            if (found[n] === "blocked") blocked[n] = Date.now()
+            else times[n] = Date.now()
           }
+          // Bounded memory: the newest answers stay, blocked ones go first.
+          var keep = Model.newestEntries(all, Model.cacheRecordMax, function(k) { return times[k] })
+          for (var o in all) if (keep[o] === undefined) { delete times[o]; delete blocked[o] }
+          root.blockedAt = blocked
+          all = keep
           root.records = all
           root.recordTimes = times
           root.saveCache()
-          // Only if the card is still there: a refresh may have dropped it.
-          var card = root.cards[job.id]
-          if (card && card.done) root.setCard(job.id, Model.buildCard(Model.withRecords(job.event, all, true), {}), "", true)
+          // Only cards still there: a refresh may have dropped them.
+          job.events.forEach(function(e) {
+            var card = root.cards[e.id]
+            if (card && card.done) root.setCard(e.id, Model.buildCard(Model.withRecords(e, all, true), {}), "", true)
+          })
         } catch (e) {}
       }
       Qt.callLater(root.nextRecords)
@@ -379,7 +400,9 @@ Item {
       var recs = {}
       for (var n in root.recordTimes)
         if (root.records[n] !== undefined && root.records[n] !== "blocked") recs[n] = { at: root.recordTimes[n], value: root.records[n] }
-      cardsFile.setText(Model.serializeCardCache(root.segmentCache, recs))
+      cardsFile.setText(Model.serializeCardCache(
+        Model.newestEntries(root.segmentCache, Model.cacheSegmentMax, function(k, v) { return v.at }),
+        Model.newestEntries(recs, Model.cacheRecordMax, function(k, v) { return v.at })))
     }
   }
 

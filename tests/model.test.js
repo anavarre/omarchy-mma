@@ -894,3 +894,60 @@ test("filterEvents matches event, organization and fighter names, ignoring case 
   assert.deepStrictEqual(ids("nobody"), []);
   assert.deepStrictEqual(ids(""), ["a", "b"]);
 });
+
+// ------------------------------------------------------- remote budgets
+
+function hostileWiki(count) {
+  let text = "";
+  for (let i = 0; i < count; i++) {
+    const day = String(1 + (i % 28)).padStart(2, "0");
+    text += `== Cage Warriors ${300 + i} ==\n{{Infobox MMA event\n|name = Cage Warriors ${300 + i}\n|date = {{start date|2027|1|${Number(day)}}}\n}}\nIntro.\n`;
+  }
+  return JSON.stringify([{ parse: { title: "2027 in Cage Warriors", wikitext: text } }]);
+}
+
+test("a page with far more valid events than the first page is bounded", () => {
+  const evs = M.parseWikipedia(hostileWiki(500), "cw", NOW, 365);
+  assert.ok(evs.length > M.eventLimitMax);
+  assert.ok(evs.length <= M.wikiSectionMax);
+  const merged = M.mergeEvents([evs], Infinity, NOW, 7);
+  assert.ok(merged.length > M.eventLimitMax);
+  assert.ok(merged.length <= M.remoteEventMax);
+});
+
+test("record lookups share names across events and stay within the budget", () => {
+  const queue = [];
+  const a = { id: "a" }, b = { id: "b" }, c = { id: "c" };
+  assert.deepStrictEqual([...M.enqueueRecords(queue, null, a, ["X", "Y"], 3)], []);
+  // "Y" is already waiting: shared, not queued twice; "Z" fits; "W" does not.
+  assert.deepStrictEqual([...M.enqueueRecords(queue, null, b, ["Y", "Z", "W"], 3)], ["W"]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(queue.map((j) => j.names))), [["X", "Y"], ["Z"]]);
+  assert.deepStrictEqual([...queue[0].events.map((e) => e.id)], ["a", "b"]);
+  const active = { events: [a], names: ["Q"] };
+  assert.deepStrictEqual([...M.enqueueRecords([], active, c, ["Q"], 3)], []);
+  assert.deepStrictEqual([...active.events.map((e) => e.id)], ["a", "c"]);
+});
+
+test("a refresh alone does not queue record lookups for every event", () => {
+  const src = fs.readFileSync(__dirname + "/../Service.qml", "utf8");
+  const body = src.slice(src.indexOf("function finishFetch"), src.indexOf("function merge"));
+  assert.ok(!/events\.forEach\([^)]*loadCard/.test(body));
+  assert.strictEqual((body.match(/loadCard\(/g) || []).length, 1);
+});
+
+test("the card cache keeps only the newest entries, on load too", () => {
+  const now = Date.now();
+  const records = {}, segments = {};
+  for (let i = 0; i < 700; i++) records["Fighter " + i] = { at: now - i * 1000, value: "1-0-0" };
+  for (let i = 0; i < 100; i++) segments[String(1000 + i)] = { at: now - i * 1000, data: { "1": { segment: "main" } } };
+  const out = M.parseCardCache(JSON.stringify({ version: 1, segments, records }), now);
+  assert.strictEqual(Object.keys(out.records).length, M.cacheRecordMax);
+  assert.strictEqual(Object.keys(out.segments).length, M.cacheSegmentMax);
+  assert.ok(out.records["Fighter 0"] && !out.records["Fighter 699"]);
+  assert.ok(out.segments["1000"] && !out.segments["1099"]);
+});
+
+test("the event cache is capped on load", () => {
+  const text = M.serializeCache(M.mergeEvents([M.parseWikipedia(hostileWiki(150), "cw", NOW, 365)], Infinity, NOW, 7), NOW);
+  assert.ok(M.parseCache(text).events.length <= M.remoteEventMax);
+});

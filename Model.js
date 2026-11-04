@@ -15,6 +15,17 @@ var promotions = [
 var defaultOrganizations = ["ufc"]
 var eventLimitMin = 1
 var eventLimitMax = 30
+// Hard budgets for what a remote answer can make us hold or look up: events
+// kept after merging, event sections read from one Wikipedia page, and names
+// waiting for a record lookup at any one time.
+var remoteEventMax = 60
+var wikiSectionMax = 200
+var recordQueueBudget = 40
+// What the card cache keeps, in memory and on disk: the newest entries only.
+var cacheSegmentMax = 60
+var cacheRecordMax = 500
+// A fighter Sherdog would not answer for is not asked again for this long.
+var blockedRetryMs = 5 * 60 * 1000
 var refreshChoices = [60, 120, 180, 360, 720, 1440]
 var lookaheadChoices = [30, 60, 90, 120, 180, 365]
 // How many days a finished event stays listed, with a check mark.
@@ -525,7 +536,31 @@ function mergeEvents(lists, limit, now, days) {
   var all = []
   lists.forEach(function(l) { all = all.concat(l) })
   var events = visibleEvents(all, now === undefined ? Date.now() : now, days)
-  return limit === Infinity ? events : events.slice(0, clampEventLimit(limit))
+  return events.slice(0, limit === Infinity ? remoteEventMax : clampEventLimit(limit))
+}
+
+// Queues a record lookup for `names` of an event. A name already waiting (or
+// being looked up, `active`) is shared with that job rather than asked again,
+// and no more than `budget` names wait at once. Returns the names that did not
+// fit; the caller leaves that card unsettled so opening it again retries.
+function enqueueRecords(queue, active, event, names, budget) {
+  var owner = ({})
+  var total = 0
+  queue.forEach(function(j) { j.names.forEach(function(n) { owner[n] = j; total++ }) })
+  if (active) active.names.forEach(function(n) { owner[n] = active })
+  var fresh = []
+  var dropped = []
+  names.forEach(function(n) {
+    var j = owner[n]
+    if (j) {
+      if (!j.events.some(function(e) { return e.id === event.id })) j.events.push(event)
+      return
+    }
+    if (total + fresh.length >= budget) { dropped.push(n); return }
+    fresh.push(n)
+  })
+  if (fresh.length > 0) queue.push({ events: [event], names: fresh })
+  return dropped
 }
 
 // Title fights carry a "types" entry such as "UFC Heavyweight Title". There is
@@ -918,7 +953,7 @@ function parseWikipedia(text, orgId, now, days) {
     if (wikitext === "") return
     // Each event is a level-2 section with an infobox.
     var sections = wikitext.split(/^==\s*(?!=)/m).slice(1)
-    sections.forEach(function(sec, i) {
+    sections.slice(0, wikiSectionMax).forEach(function(sec, i) {
       var nameMatch = /^([^=\n]+?)\s*==\s*\n/.exec(sec)
       var box = /\{\{Infobox MMA event[\s\S]*?\n\}\}/i.exec(sec)
       if (!nameMatch || !box) return
@@ -990,6 +1025,17 @@ function cardCacheFresh(at, now) {
   return isFinite(age) && age >= 0 && age < cardCacheMs
 }
 
+// The newest `max` entries of an object, `atOf(key, value)` giving each one's
+// time. Entries without a time count as oldest.
+function newestEntries(map, max, atOf) {
+  var keys = Object.keys(map)
+  if (keys.length <= max) return map
+  keys.sort(function(a, b) { return (Number(atOf(b, map[b])) || 0) - (Number(atOf(a, map[a])) || 0) })
+  var out = ({})
+  keys.slice(0, max).forEach(function(k) { out[k] = map[k] })
+  return out
+}
+
 function serializeCardCache(segments, records) {
   return JSON.stringify({ version: 1, segments: segments, records: records })
 }
@@ -1018,6 +1064,7 @@ function parseCardCache(text, now) {
     })
     if (Object.keys(clean).length > 0) out.segments[id] = { at: Number(e.at), data: clean }
   })
+  out.segments = newestEntries(out.segments, cacheSegmentMax, function(k, v) { return v.at })
   var recs = isObject(data.records) ? data.records : ({})
   Object.keys(recs).forEach(function(name) {
     var e = recs[name]
@@ -1025,6 +1072,7 @@ function parseCardCache(text, now) {
     var v = str(e.value)
     if (recordShape.test(v) || v === "n/a") out.records[name] = { at: Number(e.at), value: v }
   })
+  out.records = newestEntries(out.records, cacheRecordMax, function(k, v) { return v.at })
   return out
 }
 
@@ -1035,7 +1083,7 @@ function serializeCache(events, fetchedAt) {
 function parseCache(text) {
   var data = parseJson(text)
   if (!data || data.version !== 1 || !Array.isArray(data.events)) return null
-  return { fetchedAt: Number(data.fetchedAt) || 0, events: sanitizeEvents(data.events) }
+  return { fetchedAt: Number(data.fetchedAt) || 0, events: sanitizeEvents(data.events.slice(0, remoteEventMax)) }
 }
 
 // The cache file is writable by anything running as the user, so what comes
