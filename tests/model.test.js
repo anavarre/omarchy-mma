@@ -57,9 +57,9 @@ test("forOrganizations keeps only selected promotions' events", () => {
   assert.deepStrictEqual(M.forOrganizations(events, []), []);
 });
 
-test("organizationOptions lists UFC, PFL, Cage Warriors and KSW", () => {
+test("organizationOptions lists UFC, PFL, Cage Warriors, KSW and ARES", () => {
   const ids = M.organizationOptions().map((o) => o.value);
-  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw", "ksw"]);
+  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw", "ksw", "ares"]);
 });
 
 test("setting clamps", () => {
@@ -640,6 +640,144 @@ test("KSW and Cage Warriors never share an event id", () => {
   assert.ok(ksw.every((e) => /^[0-9]+$/.test(e.id) && !ids.has(e.id)));
 });
 
+// ------------------------------------------------------------- ARES (own site)
+//
+// The saved pages of aresfighting.com, as bin/mma-api ares prints them: the
+// upcoming and past listings, the card page of five upcoming events and the
+// result page of ARES 44 (the one past event fetched).
+
+const aresPages = fixture("ares-2026.json");
+const ares = M.parseAres(aresPages, NOW, 120);
+const aresEvent = (name) => ares.find((e) => e.name === name);
+
+test("ARES: the past event and the upcoming ones within the look-ahead, in date order", () => {
+  assert.deepStrictEqual(ares.map((e) => e.name), ["ARES 44", "ARES 45", "ARES 46", "ARES Marseille January 2027", "ARES Paris February 2027"]);
+  assert.deepStrictEqual(ares.map((e) => e.date), ares.map((e) => e.date).slice().sort());
+  assert.ok(ares.every((e) => e.org === "ares" && e.inline && /^[0-9]+$/.test(e.id)));
+  assert.strictEqual(new Set(ares.map((e) => e.id)).size, ares.length);
+  assert.strictEqual(M.parseAres(aresPages, NOW, 365).length, 7);
+});
+
+test("ARES: bad input gives no events instead of throwing", () => {
+  for (const bad of ["", "nope", "[]", "null", "{}", '{"upcoming":5,"past":[],"cards":[],"results":"x"}']) {
+    assert.deepStrictEqual(M.parseAres(bad, NOW, 365), []);
+  }
+});
+
+test("ARES: event details, with the start time from the card page in Paris time", () => {
+  const e = aresEvent("ARES 45");
+  assert.strictEqual(e.id, "8600045");
+  assert.strictEqual(e.date, "2026-11-20T18:30:00.000Z");
+  assert.strictEqual(e.dateOnly, false);
+  assert.strictEqual(e.finished, false);
+  assert.strictEqual(e.tz, "Europe/Paris");
+  assert.strictEqual(e.url, "https://www.aresfighting.com/events/?competition=3368");
+  assert.strictEqual(e.logo, "assets/ares.png");
+  assert.strictEqual(e.orgLabel, "ARES");
+  assert.strictEqual(e.orgTag, "ARES");
+  assert.strictEqual(M.whenText(e, "24h", "Europe/Paris"), "Fri, Nov 20 · 19:30");
+  // An event without a number still gets a stable id of its own.
+  const m = aresEvent("ARES Marseille January 2027");
+  assert.strictEqual(m.id, "8970115");
+  assert.strictEqual(m.date, "2027-01-15T19:00:00.000Z");
+});
+
+test("ARES: an announced card has its bouts, records and no results; main event last", () => {
+  const e = aresEvent("ARES 45");
+  assert.strictEqual(e.fights.length, 6);
+  assert.ok(e.fights.every((f) => !f.done && f.method === "" && f.fighters.every((x) => !x.winner)));
+  const sections = M.buildCard(e, {});
+  assert.strictEqual(sections.length, 1);
+  const main = sections[0].fights[0];
+  assert.deepStrictEqual(main.fighters.map((x) => x.name), ["Jordan Zebo", "Baissangour Chamsoudinov"]);
+  assert.deepStrictEqual(main.fighters.map((x) => x.record), ["11-1-0", "11-1-0"]);
+  assert.strictEqual(main.weightClass, "Welterweight");
+  assert.strictEqual(M.isMainEvent(sections[0], 0), true);
+  // Zebo's photo is named ...-CHAMP-..., so the main event counts as a title fight; no other bout does.
+  assert.strictEqual(main.champion, true);
+  assert.strictEqual(e.fights.filter((f) => f.champion).length, 1);
+  assert.strictEqual(M.headlinerText(e), "Jordan Zebo vs Baissangour Chamsoudinov");
+  // Records come with the card, so nothing is left to look up on Sherdog.
+  assert.deepStrictEqual(M.namesNeedingRecords(e, {}), []);
+  assert.strictEqual(aresEvent("ARES Paris February 2027").fights.length, 0);
+});
+
+test("ARES: a finished card has two segments, winners and how each fight ended", () => {
+  const e = aresEvent("ARES 44");
+  assert.strictEqual(e.finished, true);
+  assert.strictEqual(e.dateOnly, true);
+  assert.strictEqual(e.date, "2026-10-31T12:00:00.000Z");
+  assert.strictEqual(e.url, "https://www.aresfighting.com/ares-44-fighting/");
+  const sections = M.buildCard(e, {});
+  assert.deepStrictEqual(sections.map((s) => s.label), ["Main Card", "Prelims"]);
+  assert.strictEqual(sections[0].fights.length, 4);
+  assert.strictEqual(sections[1].fights.length, 4);
+  const main = sections[0].fights[0];
+  assert.deepStrictEqual(main.fighters.map((x) => x.name), ["Aboubakar Younousov", "Tyson Nam"]);
+  assert.strictEqual(M.outcome(main, 0), "win");
+  assert.strictEqual(M.outcome(main, 1), "loss");
+  assert.strictEqual(M.resultLabel(main), "R3 3:21 TKO");
+  // A win on the right-hand side, and French methods in English.
+  const labels = sections.flatMap((s) => s.fights).map((f) => M.resultLabel(f));
+  assert.ok(labels.includes("R1 3:43 Submission"));
+  assert.ok(labels.includes("Split Decision"));
+  assert.ok(labels.includes("Majority Decision"));
+  assert.ok(labels.includes("R1 0:47 KO"));
+  const split = sections.flatMap((s) => s.fights).find((f) => f.method === "Split Decision");
+  assert.deepStrictEqual([M.outcome(split, 0), M.outcome(split, 1)], ["loss", "win"]);
+});
+
+test("ARES: a result page that was not fetched gives no event, a card page that was not gives an empty card", () => {
+  const data = JSON.parse(aresPages);
+  data.results = {};
+  assert.ok(!M.parseAres(data, NOW, 120).some((e) => e.name === "ARES 44"));
+  data.cards = {};
+  const e = M.parseAres(data, NOW, 120).find((x) => x.name === "ARES 45");
+  assert.deepStrictEqual([e.fights.length, e.dateOnly, e.date], [0, true, "2026-11-20T12:00:00.000Z"]);
+});
+
+test("ARES: events survive the cache with their card", () => {
+  const back = M.parseCache(M.serializeCache(ares, 1)).events;
+  assert.deepStrictEqual(back, ares.map((e) => JSON.parse(JSON.stringify(e))));
+});
+
+test("aresDate reads the listing's day and the card page's time, in summer time too", () => {
+  assert.deepStrictEqual(M.aresDate("20/11/2026"), { day: "2026-11-20T12:00:00.000Z", at: "" });
+  assert.strictEqual(M.aresDate("20/11/2026 19:30:00").at, "2026-11-20T18:30:00.000Z");
+  assert.strictEqual(M.aresDate("03/07/2026 19:30:00").at, "2026-07-03T17:30:00.000Z");
+  // Clocks change on the last Sunday of March and October.
+  assert.strictEqual(M.aresDate("28/03/2026 20:00").at, "2026-03-28T19:00:00.000Z");
+  assert.strictEqual(M.aresDate("29/03/2026 20:00").at, "2026-03-29T18:00:00.000Z");
+  assert.strictEqual(M.aresDate("24/10/2026 20:00").at, "2026-10-24T18:00:00.000Z");
+  assert.strictEqual(M.aresDate("25/10/2026 20:00").at, "2026-10-25T19:00:00.000Z");
+  for (const bad of ["", "soon", "31/02/2026", "20/11/1999", "2026-11-20"]) assert.strictEqual(M.aresDate(bad), null);
+  assert.strictEqual(M.aresDate("20/11/2026 25:00").at, "");
+});
+
+test("aresName puts French months in English and leaves the rest alone", () => {
+  assert.strictEqual(M.aresName("ARES Marseille Janvier 2027"), "ARES Marseille January 2027");
+  assert.strictEqual(M.aresName("ARES Paris F\u00e9vrier 2027"), "ARES Paris February 2027");
+  assert.strictEqual(M.aresName("ARES Paris, JUIN 2027"), "ARES Paris, June 2027");
+  assert.strictEqual(M.aresName("ARES 45"), "ARES 45");
+  assert.strictEqual(M.aresName("ARES Mars Attacks"), "ARES March Attacks");
+});
+
+test("aresMethod turns the site's French and English into one wording", () => {
+  const cases = { "Decision Unanime": "Unanimous Decision", "decision Unanime": "Unanimous Decision", "Décision partagée": "Split Decision",
+    "Decision majoritaire": "Majority Decision", "Soumission": "Submission", "TKO": "TKO", "KO": "KO", "Nul": "Draw", "": "" };
+  for (const [raw, want] of Object.entries(cases)) assert.strictEqual(M.aresMethod(raw), want, raw);
+});
+
+test("htmlText strips markup and decodes entities, without being tricked into markup", () => {
+  assert.strictEqual(M.htmlText("<b>Sofia&nbsp;&amp; Ma&#235;lle</b> &#x41; &rsquo;"), "Sofia & Maëlle A \u2019");
+  assert.strictEqual(M.htmlText("&lt;script&gt; &#0; &#xD800; &bogus;"), "<script> &#0; &#xD800; &bogus;");
+});
+
+test("ARES never shares an event id with KSW or Cage Warriors", () => {
+  const ids = new Set(cw.concat(ksw).map((e) => e.id));
+  assert.ok(M.parseAres(aresPages, NOW, 365).every((e) => !ids.has(e.id)));
+});
+
 test("wikiDate reads the template and both plain-text forms, and rejects nonsense", () => {
   const iso = "2026-11-21T12:00:00.000Z";
   assert.strictEqual(M.wikiDate("{{start date|2026|11|21}}"), iso);
@@ -670,9 +808,10 @@ test("ESPN events are timed and fetch their card separately", () => {
   assert.ok(ufc.every((e) => e.dateOnly === false && e.inline === false));
 });
 
-test("providerOf: Cage Warriors and KSW read Wikipedia, the others ESPN", () => {
+test("providerOf: Cage Warriors and KSW read Wikipedia, ARES its own site, the others ESPN", () => {
   assert.strictEqual(M.providerOf("cw"), "wikipedia");
   assert.strictEqual(M.providerOf("ksw"), "wikipedia");
+  assert.strictEqual(M.providerOf("ares"), "ares");
   assert.strictEqual(M.providerOf("ufc"), "espn");
   assert.strictEqual(M.providerOf("nope"), "espn");
 });

@@ -36,7 +36,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 
 | Setting | Default | |
 |---|---|---|
-| `organizations` | `["ufc"]` | Promotions to follow: `ufc`, `pfl`, `cw` (Cage Warriors) or `ksw`. |
+| `organizations` | `["ufc"]` | Promotions to follow: `ufc`, `pfl`, `cw` (Cage Warriors), `ksw` or `ares`. UFC and PFL are fully supported; all others are experimental. |
 | `eventLimit` | `10` | Events listed at first, 1 to 30. More load as you scroll or arrow down. |
 | `lookaheadDays` | `120` | How far ahead to look. |
 | `refreshMinutes` | `180` | Background refresh interval. |
@@ -55,8 +55,8 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
   `r` refreshes, `Esc` goes back, then closes.
 - On a card, `↑`/`↓` scroll and `←` goes back.
 
-Logos are ESPN's league logos for UFC and PFL, and the Wikipedia logos for Cage Warriors
-(emblem only, on a dark tile) and KSW, bundled in `assets/`; they remain the
+Logos are ESPN's league logos for UFC and PFL, the Wikipedia logos for Cage Warriors
+(emblem only, on a dark tile) and KSW, and ARES's own logo, bundled in `assets/`; they remain the
 property of their owners.
 
 ## Where the data comes from
@@ -96,7 +96,26 @@ No key or account is needed.
 - Cards are as complete as the page: a late change may take a while to appear.
 - The event link opens its section on Wikipedia. Wikipedia text is CC BY-SA.
 
-Only UFC, PFL, Cage Warriors and KSW are available at the moment. Another promotion
+### ARES: the promotion's own site
+
+ARES Fighting Championship (France) is on neither ESPN nor Wikipedia, so its
+events are read from [aresfighting.com](https://www.aresfighting.com/events/)
+(`bin/mma-api ares`). Its `robots.txt` allows these pages, and they are fetched
+sparingly: two listings, then one page per event.
+
+- Upcoming events come from the "Upcoming events" listing, and each one's
+  "Fight Card" page gives the start time (Paris time, shown in the time zone
+  you chose), the bouts and the fighters' records. Events whose card is not
+  announced yet show no fights.
+- Past events come from the "Past events" listing, and each one's result page
+  gives the winners and how each fight ended. Only recent ones are fetched: as
+  far back as "Keep finished events" reaches, and no more than six.
+- The site writes methods in French and English; they are shown in English.
+- The site gives no venue or title-fight marker, so ARES events show neither.
+- The event link opens the event's page on aresfighting.com. This reads the
+  site's HTML, so a redesign could break it until the parser is updated.
+
+Only UFC, PFL, Cage Warriors, KSW and ARES are available at the moment. Another promotion
 needs a provider of its own; suggestions are welcome, please open an issue.
 
 Card details (segments, and Cage Warriors and KSW fighter records, which are looked up

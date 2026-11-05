@@ -24,7 +24,8 @@
       "pfl",
       "fights",
       "cagewarriors",
-      "ksw"
+      "ksw",
+      "ares"
     ],
     "allowMultiple": false,
     "defaultSection": "right",
@@ -46,7 +47,7 @@
         "key": "organizations",
         "type": "multiselect",
         "label": "Organizations",
-        "description": "Which promotions to show events for. UFC, PFL, Cage Warriors and KSW are available.",
+        "description": "Which promotions to show events for. UFC and PFL are fully supported; Cage Warriors, KSW and ARES are experimental.",
         "noSelectionText": "None selected",
         "placeholderText": "Search organizations...",
         "emptyText": "No organizations",
@@ -70,6 +71,11 @@
             "value": "ksw",
             "label": "KSW",
             "description": "Konfrontacja Sztuk Walki"
+          },
+          {
+            "value": "ares",
+            "label": "ARES",
+            "description": "ARES Fighting Championship"
           }
         ],
         "defaultValue": [

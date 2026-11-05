@@ -700,10 +700,31 @@ Panel {
           Repeater {
             model: root.showSettings ? root.promotions : []
 
-            Rectangle {
-              id: orgRow
+            Column {
+              id: orgWrap
               required property int index
               required property var modelData
+              width: settingsView.width
+              spacing: Style.space(2)
+
+              Text {
+                width: parent.width
+                visible: orgWrap.modelData.experimental === true
+                  && (orgWrap.index === 0 || root.promotions[orgWrap.index - 1].experimental !== true)
+                height: visible ? implicitHeight + Style.space(10) : 0
+                verticalAlignment: Text.AlignBottom
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+                text: "Experimental organizations to show events for"
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: root.fs(Style.font.bodySmall)
+              }
+
+            Rectangle {
+              id: orgRow
+              readonly property int index: orgWrap.index
+              readonly property var modelData: orgWrap.modelData
               readonly property bool on: root.organizationOn(orgRow.modelData.id)
               width: settingsView.width
               height: Math.max(orgText.implicitHeight, Style.space(Math.round(32 * root.textScale))) + Style.space(14)
@@ -786,6 +807,7 @@ Panel {
                 onEntered: root.settingsSelected = orgRow.index
                 onClicked: root.toggleOrganization(orgRow.index)
               }
+            }
             }
           }
 

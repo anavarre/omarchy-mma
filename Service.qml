@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Io
 import "Model.js" as Model
 
-// The one process-wide owner of everything fetched (ESPN, and Wikipedia for Cage Warriors and KSW): the event list,
+// The one process-wide owner of everything fetched (ESPN, Wikipedia for Cage Warriors and KSW, and ARES's own site): the event list,
 // per-event cards and the refresh timer. The bar widget exists once per
 // monitor; they all read this instead of polling on their own.
 Item {
@@ -97,9 +97,12 @@ Item {
     var now = new Date()
     var days = Model.snapLookaheadDays(root.lookaheadDays)
     var back = root.keepFinishedDays + 1
-    eventsProcess.command = Model.providerOf(org) === "wikipedia"
+    var provider = Model.providerOf(org)
+    eventsProcess.command = provider === "wikipedia"
       ? ["/usr/bin/bash", root.api, "wiki", org].concat(Model.wikiYears(now, days, back))
-      : ["/usr/bin/bash", root.api, "events", promo.slug, Model.dateRange(now, days, back)]
+      : provider === "ares"
+        ? ["/usr/bin/bash", root.api, "ares", String(back)]
+        : ["/usr/bin/bash", root.api, "events", promo.slug, Model.dateRange(now, days, back)]
     eventsProcess.running = true
   }
 
@@ -281,9 +284,13 @@ Item {
       if (exitCode === 0) {
         try {
           var org = eventsProcess.org
-          var parsed = Model.providerOf(org) === "wikipedia"
-            ? Model.parseWikipedia(eventsOut.text, org, Date.now(), Model.snapLookaheadDays(root.lookaheadDays))
-            : Model.parseScoreboard(eventsOut.text, org)
+          var provider = Model.providerOf(org)
+          var days = Model.snapLookaheadDays(root.lookaheadDays)
+          var parsed = provider === "wikipedia"
+            ? Model.parseWikipedia(eventsOut.text, org, Date.now(), days)
+            : provider === "ares"
+              ? Model.parseAres(eventsOut.text, Date.now(), days)
+              : Model.parseScoreboard(eventsOut.text, org)
           var g = root.gathered
           g[eventsProcess.org] = parsed
           root.gathered = g

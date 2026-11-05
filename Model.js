@@ -4,12 +4,13 @@
 // QML types so they can be unit-tested with node (tests/model.test.js).
 
 // Promotions the settings pane offers. `enabled` ones have a data provider:
-// "espn" (the default) or "wikipedia" (see parseWikipedia).
+// "espn" (the default), "wikipedia" (see parseWikipedia) or "ares" (parseAres).
 var promotions = [
   { id: "ufc", label: "UFC", slug: "ufc", enabled: true, logo: "assets/ufc.png", description: "Ultimate Fighting Championship" },
   { id: "pfl", label: "PFL", slug: "pfl", enabled: true, logo: "assets/pfl.png", description: "Professional Fighters League" },
-  { id: "cw", label: "Cage Warriors", slug: "cage-warriors", enabled: true, logo: "assets/cw.png", tag: "CW", provider: "wikipedia", wikiPage: "Cage_Warriors", idBase: 8000000, description: "Cage Warriors Fighting Championship" },
-  { id: "ksw", label: "KSW", slug: "ksw", enabled: true, logo: "assets/ksw.png", tag: "KSW", provider: "wikipedia", wikiPage: "Konfrontacja_Sztuk_Walki", idBase: 8300000, description: "Konfrontacja Sztuk Walki" }
+  { id: "cw", experimental: true, label: "Cage Warriors", slug: "cage-warriors", enabled: true, logo: "assets/cw.png", tag: "CW", provider: "wikipedia", wikiPage: "Cage_Warriors", idBase: 8000000, description: "Cage Warriors Fighting Championship" },
+  { id: "ksw", experimental: true, label: "KSW", slug: "ksw", enabled: true, logo: "assets/ksw.png", tag: "KSW", provider: "wikipedia", wikiPage: "Konfrontacja_Sztuk_Walki", idBase: 8300000, description: "Konfrontacja Sztuk Walki" },
+  { id: "ares", experimental: true, label: "ARES", slug: "ares", enabled: true, logo: "assets/ares.png", tag: "ARES", provider: "ares", idBase: 8600000, description: "ARES Fighting Championship" }
 ]
 
 var defaultOrganizations = ["ufc"]
@@ -999,6 +1000,211 @@ function parseWikipedia(text, orgId, now, days) {
         headliner: fightCount > 0 ? fights[fightCount - 1] : null
       })
     })
+  })
+  return sortEvents(out)
+}
+
+// ------------------------------------------------------------------ ares
+//
+// ARES Fighting Championship (France) is on neither ESPN nor Wikipedia, so its
+// events are read from the promotion's own site (bin/mma-api ares): the
+// upcoming and past listings, the "Fight Card" page of each upcoming event and
+// the result page of each past one. Like Wikipedia's, these events carry their
+// whole card (`inline`), records included. The listings give a day; an upcoming
+// event's card page also gives the start time, in Paris time.
+
+// The site's markup reduced to the text a reader sees.
+function htmlText(s) {
+  return str(s).replace(/<!--[\s\S]*?-->/g, "").replace(/<[^>]*>/g, " ")
+    .replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, function(m, e) {
+      var named = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " ", rsquo: "’", lsquo: "‘" }
+      var code = e.charAt(0) !== "#" ? -1 : (e.charAt(1).toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10))
+      if (code > 0 && code < 0x110000 && !(code >= 0xd800 && code < 0xe000)) return String.fromCodePoint ? String.fromCodePoint(code) : " "
+      return named[e.toLowerCase()] !== undefined ? named[e.toLowerCase()] : m
+    }).replace(/\s+/g, " ").trim()
+}
+
+function lastSundayUtc(year, month, hour) {
+  var last = new Date(Date.UTC(year, month + 1, 0, hour))
+  return last.getTime() - last.getUTCDay() * 86400000
+}
+
+// The instant of a Paris wall-clock time: summer time runs from the last
+// Sunday of March to the last Sunday of October, both at 01:00 UTC.
+function parisInstant(y, mo, d, h, mi) {
+  var asUtc = Date.UTC(y, mo, d, h, mi)
+  var summer = asUtc - 3600000 >= lastSundayUtc(y, 2, 1) && asUtc - 7200000 < lastSundayUtc(y, 9, 1)
+  return asUtc - (summer ? 2 : 1) * 3600000
+}
+
+// "20/11/2026" or "20/11/2026 19:30:00" -> { day: noon UTC of that day, at:
+// the instant when a time is given or "" }, or null when unreadable.
+function aresDate(text) {
+  var m = /(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::\d{2})?)?/.exec(str(text))
+  if (!m) return null
+  var y = Number(m[3]), mo = Number(m[2]) - 1, d = Number(m[1])
+  var day = new Date(Date.UTC(y, mo, d, 12))
+  if (isNaN(day.getTime()) || day.getUTCMonth() !== mo || y < 2000) return null
+  var at = ""
+  if (m[4] !== undefined && Number(m[4]) < 24 && Number(m[5]) < 60) at = new Date(parisInstant(y, mo, d, Number(m[4]), Number(m[5]))).toISOString()
+  return { day: day.toISOString(), at: at }
+}
+
+// The site names some events in French ("ARES Paris Fevrier 2027"); the months
+// are shown in English, whatever the accents or case.
+var frenchMonths = {
+  janvier: "January", fevrier: "February", mars: "March", avril: "April", mai: "May", juin: "June",
+  juillet: "July", aout: "August", septembre: "September", octobre: "October", novembre: "November", decembre: "December"
+}
+
+function aresName(text) {
+  return htmlText(text).replace(/[A-Za-z\u00c0-\u00ff]+/g, function(w) {
+    var plain = w.toLowerCase().normalize ? w.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") : w.toLowerCase()
+    return Object.prototype.hasOwnProperty.call(frenchMonths, plain) ? frenchMonths[plain] : w
+  })
+}
+
+// The site writes methods in French and English, in any case.
+function aresMethod(text) {
+  var s = htmlText(text)
+  var plain = s.toLowerCase().normalize ? s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "") : s.toLowerCase()
+  if (/unanim/.test(plain)) return "Unanimous Decision"
+  if (/partag|split/.test(plain)) return "Split Decision"
+  if (/majorit/.test(plain)) return "Majority Decision"
+  if (/decision/.test(plain)) return "Decision"
+  if (/soumission|submission/.test(plain)) return "Submission"
+  if (/^\s*(draw|nul)/.test(plain)) return "Draw"
+  if (/no contest|disqual/.test(plain)) return /disqual/.test(plain) ? "DQ" : "No Contest"
+  if (/^t?ko\b/.test(plain)) return plain.indexOf("tko") === 0 ? "TKO" : "KO"
+  return s.slice(0, 80)
+}
+
+// The fights of a card page or result page as wikiFight makes them. The page
+// lists the main event first; the model wants it last.
+function aresFights(html) {
+  var out = []
+  var segment = "main"
+  var re = /<h2[^>]*>([\s\S]*?)<\/h2>|class="(?:[^"]*\s)?fighter-line(?:\s[^"]*)?"/g
+  var marks = []
+  var m
+  while ((m = re.exec(html)) !== null) marks.push({ at: m.index, end: re.lastIndex, heading: m[1] })
+  for (var i = 0; i < marks.length && out.length < maxFightsPerEvent; i++) {
+    if (marks[i].heading !== undefined) { segment = wikiSegment(htmlText(marks[i].heading)); continue }
+    var block = html.slice(marks[i].end, i + 1 < marks.length ? marks[i + 1].at : html.length)
+    var names = []
+    var nameRe = /<h4[^>]*>([\s\S]*?)<\/h4>/g
+    var n
+    while ((n = nameRe.exec(block)) !== null && names.length < 2) names.push(htmlText(n[1]))
+    if (names.length < 2) continue
+    var values = {}
+    var valRe = /combat-round-title">([\s\S]*?)<\/span>\s*<span class="combat-round-value">([\s\S]*?)<\/span>/g
+    while ((n = valRe.exec(block)) !== null) values[htmlText(n[1]).toLowerCase()] = htmlText(n[2])
+    var records = /class="records"[\s\S]*?stat-left">([^<]*)<[\s\S]*?stat-right">([^<]*)</.exec(block)
+    var weight = /<h3[^>]*>([\s\S]*?)<\/h3>/.exec(block)
+    // The site has no title flag. Its photo of a champion is named "...-CHAMP-...",
+    // so a main event whose first fighter has one is taken as a title fight.
+    var photo = /class="fighter-one"[\s\S]*?<img[^>]*\ssrc="([^"]*)"/.exec(block)
+    var champ = out.length === 0 && segment === "main" && photo !== null && /[-_]CHAMP[-_.]/i.test(photo[1])
+    var method = aresMethod(values.method || "")
+    var done = method !== ""
+    var left = /class="winner winner-left"/.test(block)
+    var right = /class="winner winner-right"/.test(block)
+    out.push({ segment: segment, names: names, records: records ? [htmlText(records[1]), htmlText(records[2])] : ["", ""],
+      weightClass: weight ? htmlText(weight[1]) : "", method: method, done: done,
+      champion: champ, round: roundNumber(values.round), clock: str(values.time).slice(0, 12), winners: [done && left && !right, done && right && !left] })
+  }
+  return out.map(function(b, index) {
+    var fighters = [0, 1].map(function(k) {
+      var tba = isTba(b.names[k])
+      return { name: tba ? "TBA" : b.names[k], shortName: tba ? "TBA" : b.names[k],
+        record: !tba && recordShape.test(b.records[k]) ? b.records[k] : "", country: "", winner: b.winners[k], tba: tba }
+    })
+    return {
+      id: String(index + 1),
+      weightClass: b.weightClass,
+      rounds: 0,
+      startDate: "",
+      status: b.done ? "STATUS_FINAL" : "STATUS_SCHEDULED",
+      done: b.done,
+      round: b.round,
+      clock: b.clock,
+      fighters: fighters,
+      segment: b.segment,
+      matchNumber: index + 1,
+      champion: b.champion,
+      method: b.method
+    }
+  }).reverse()
+}
+
+// Events from what `bin/mma-api ares` prints. Upcoming events further than
+// `days` ahead are dropped; past ones are all finished.
+function parseAres(text, now, days) {
+  var data = typeof text === "string" ? parseJson(text) : text
+  if (!isObject(data)) return []
+  var promo = promotionById("ares")
+  var cards = isObject(data.cards) ? data.cards : ({})
+  var results = isObject(data.results) ? data.results : ({})
+  var nowMs = now === undefined ? Date.now() : Number(now)
+  var out = []
+  var seen = ({})
+
+  function add(name, when, fights, finished, url) {
+    var number = /\bARES\s+(\d+)\b/i.exec(name)
+    var ymd = (when.day.slice(2, 4) + when.day.slice(5, 7) + when.day.slice(8, 10))
+    var id = String(promo.idBase + (number ? Number(number[1]) : 100000 + Number(ymd)))
+    if (seen[id]) return
+    seen[id] = true
+    var date = when.at !== "" ? when.at : when.day
+    var startMs = new Date(date).getTime()
+    var allDone = fights.length > 0 && fights.every(function(f) { return f.done })
+    var over = finished || allDone || nowMs - startMs > eventLengthMs + 12 * 3600 * 1000
+    if (!over && days !== undefined && startMs - nowMs > days * 86400000) return
+    var count = fights.length
+    out.push({
+      id: id,
+      org: "ares",
+      orgLabel: promo.label,
+      orgTag: tagFor("ares"),
+      logo: logoFor("ares"),
+      slug: promo.slug,
+      name: name,
+      shortName: name,
+      date: date,
+      dateOnly: when.at === "",
+      inline: true,
+      finished: over,
+      venue: "",
+      tz: zoneForAddress({ country: "France" }),
+      broadcast: "",
+      url: url,
+      fights: fights,
+      fightCount: count,
+      headliner: count > 0 ? fights[count - 1] : null
+    })
+  }
+
+  // Upcoming events: one block each in the listing, its card page by id.
+  str(data.upcoming).split(/class="competition-resume upcoming"/).slice(1, 20).forEach(function(block) {
+    var name = aresName((/title="([^"]*)"/.exec(block) || [])[1])
+    var comp = /\?competition=(\d{1,9})/.exec(block)
+    var when = aresDate((/class="date">[\s\S]*?<br\s*\/?>\s*(\d{2}\/\d{2}\/\d{4})/.exec(block) || [])[1])
+    if (name === "" || !comp || !when) return
+    var page = str(cards[comp[1]])
+    // The card page repeats the date, with the start time.
+    var timed = aresDate((/class="date">[\s\S]*?<br\s*\/?>\s*(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}(?::\d{2})?)/.exec(page) || [])[1])
+    if (timed && timed.day === when.day) when = timed
+    add(name, when, aresFights(page), false, safeUrl("https://www.aresfighting.com/events/?competition=" + comp[1]))
+  })
+
+  // Past events: an entry each in the listing, linking to the result page.
+  str(data.past).split(/competition-resume past/).slice(1, 60).forEach(function(block) {
+    var path = /href="https:\/\/www\.aresfighting\.com(\/[A-Za-z0-9_-]+\/)"/.exec(block)
+    var name = aresName((/title="([^"]*)"/.exec(block) || [])[1])
+    var when = aresDate((/class="date">\s*(\d{2}\/\d{2}\/\d{4})/.exec(block) || [])[1])
+    // Only the pages bin/mma-api fetched (the recent ones) become events.
+    if (!path || name === "" || !when || results[path[1]] === undefined) return
+    add(name, when, aresFights(str(results[path[1]])), true, safeUrl("https://www.aresfighting.com" + path[1]))
   })
   return sortEvents(out)
 }

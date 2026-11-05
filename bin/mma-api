@@ -18,6 +18,16 @@
 #       array of the API's answers, one per year; years whose request fails are
 #       left out, and it exits 1 when none came through. Model.js reads the wikitext.
 #
+#   mma-api ares <days>
+#       ARES Fighting Championship (France) is on neither ESPN nor Wikipedia, so
+#       its schedule comes from the promotion's own site: the upcoming-events
+#       listing, each upcoming event's "Fight Card" page, the past-events
+#       listing and the result page of every past event of the last <days>
+#       days (at most MAX_ARES_PAST). One JSON object holding those pages as
+#       strings: {"upcoming", "past", "cards": {competitionId: html},
+#       "results": {path: html}}. Model.js reads the HTML. It exits 1 when
+#       neither listing came through.
+#
 #   mma-api records <name>...
 #       Wikipedia's cards carry no fight records, so the fighters' W-L-D come
 #       from Sherdog's fighter pages. A JSON object mapping every name to e.g.
@@ -27,7 +37,7 @@
 #       namesake gets "n/a" rather than someone else's record. It exits 1 when
 #       every name came back "blocked".
 #
-# MMA_SITE_BASE, MMA_CORE_BASE, MMA_WIKI_API and MMA_SHERDOG_BASE override the endpoints for running the
+# MMA_SITE_BASE, MMA_CORE_BASE, MMA_WIKI_API, MMA_ARES_BASE and MMA_SHERDOG_BASE override the endpoints for running the
 # script by hand. They must be https: curl refuses every other scheme, and
 # Service.qml does not pass them through from the shell's environment.
 set -u -o pipefail
@@ -36,12 +46,16 @@ SITE_BASE=${MMA_SITE_BASE:-https://site.api.espn.com/apis/site/v2/sports/mma}
 CORE_BASE=${MMA_CORE_BASE:-https://sports.core.api.espn.com/v2/sports/mma/leagues}
 WIKI_API=${MMA_WIKI_API:-https://en.wikipedia.org/w/api.php}
 SHERDOG_BASE=${MMA_SHERDOG_BASE:-https://www.sherdog.com}
+ARES_BASE=${MMA_ARES_BASE:-https://www.aresfighting.com}
 # Wikimedia asks API clients to say who they are.
 WIKI_UA="omarchy-mma (https://github.com/anavarre/omarchy-mma)"
 PARALLEL=16
 # A card has at most about 15 fights; never make more requests than this for
 # one event, whatever the scoreboard listed.
 MAX_FIGHTS=40
+# Pages fetched for ARES: card pages of upcoming events, result pages of past ones.
+MAX_ARES_UPCOMING=8
+MAX_ARES_PAST=6
 # ESPN's largest answer is well under 1 MB; refuse anything far beyond that.
 MAX_BYTES=8388608
 
@@ -64,6 +78,13 @@ urlencode() {
     esac
   done
   printf '%s' "$out"
+}
+
+# Prints stdin as a JSON string. Control characters other than tab and newline
+# are dropped (they are not valid in JSON); the rest is escaped.
+jstr() {
+  LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' -e 's/\r$//' \
+    | awk 'BEGIN { printf "\"" } { printf "%s\\n", $0 } END { printf "\"" }'
 }
 
 # Lower-case ASCII form of a name, so "Jose" matches "José" and HTML entities
@@ -179,6 +200,61 @@ case "$cmd" in
     printf ']'
     [ "$ok" -eq 1 ] || exit 1
     ;;
+  ares)
+    [ $# -eq 1 ] && [[ $1 =~ ^[0-9]{1,4}$ ]] || die "usage: ares <days>"
+    back=$1
+    tmp=$(mktemp -d) || exit 1
+    trap 'rm -rf "$tmp"' EXIT
+    ok=0
+    fetch "$ARES_BASE/events/?filter=upcoming" > "$tmp/upcoming" 2> /dev/null && [ -s "$tmp/upcoming" ] && ok=1 || : > "$tmp/upcoming"
+    fetch "$ARES_BASE/events/?filter=past" > "$tmp/past" 2> /dev/null && [ -s "$tmp/past" ] && ok=1 || : > "$tmp/past"
+    [ "$ok" -eq 1 ] || exit 1
+    # Upcoming events: the listing links each one's card as ?competition=<id>.
+    ids=$(grep -oE '\?competition=[0-9]{1,9}' "$tmp/upcoming" | sed 's/.*=//' | awk '!seen[$0]++' | head -n "$MAX_ARES_UPCOMING")
+    # Past events: href and date of every entry, newest first, kept while the
+    # date is within the window.
+    cutoff=$(date -u -d "-$back days" +%Y%m%d 2> /dev/null) || cutoff=00000000
+    paths=$(tr '\n' ' ' < "$tmp/past" \
+      | grep -oE 'competition-resume past" +href="https://www\.aresfighting\.com/[A-Za-z0-9_-]+/"|<p class="date">[0-9]{2}/[0-9]{2}/[0-9]{4}' \
+      | sed -E 's|.*aresfighting\.com(/[^"]*)"|\1|; s|.*>||' | paste -d' ' - - \
+      | while read -r path d; do
+          [[ $path =~ ^/[A-Za-z0-9_-]+/$ ]] && [[ $d =~ ^([0-9]{2})/([0-9]{2})/([0-9]{4})$ ]] || continue
+          [ "${BASH_REMATCH[3]}${BASH_REMATCH[2]}${BASH_REMATCH[1]}" -ge "$cutoff" ] && printf '%s\n' "$path"
+        done | head -n "$MAX_ARES_PAST")
+    n=0
+    for id in $ids; do
+      n=$((n + 1))
+      { fetch "$ARES_BASE/events/?competition=$id" > "$tmp/card.$id" 2> /dev/null || rm -f "$tmp/card.$id"; } &
+      if [ $((n % PARALLEL)) -eq 0 ]; then wait; fi
+    done
+    wait
+    n=0
+    for path in $paths; do
+      n=$((n + 1))
+      key=${path//\//_}
+      { fetch "$ARES_BASE$path" > "$tmp/result.$key" 2> /dev/null || rm -f "$tmp/result.$key"; } &
+      if [ $((n % PARALLEL)) -eq 0 ]; then wait; fi
+    done
+    wait
+    printf '{"upcoming":'; jstr < "$tmp/upcoming"
+    printf ',"past":'; jstr < "$tmp/past"
+    printf ',"cards":{'
+    sep=""
+    for id in $ids; do
+      [ -s "$tmp/card.$id" ] || continue
+      printf '%s"%s":' "$sep" "$id"; jstr < "$tmp/card.$id"
+      sep=","
+    done
+    printf '},"results":{'
+    sep=""
+    for path in $paths; do
+      key=${path//\//_}
+      [ -s "$tmp/result.$key" ] || continue
+      printf '%s"%s":' "$sep" "$path"; jstr < "$tmp/result.$key"
+      sep=","
+    done
+    printf '}}'
+    ;;
   records)
     [ $# -ge 1 ] && [ $# -le $((MAX_FIGHTS * 2)) ] || die "usage: records <name>..."
     tmp=$(mktemp -d) || exit 1
@@ -207,6 +283,6 @@ case "$cmd" in
     [ "$ok" -eq 1 ] || exit 1
     ;;
   *)
-    die "usage: mma-api events|card|wiki|records ..."
+    die "usage: mma-api events|card|wiki|ares|records ..."
     ;;
 esac
