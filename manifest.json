@@ -27,6 +27,7 @@
       "ksw",
       "ares",
       "oktagon",
+      "aca",
       "hexagone"
     ],
     "allowMultiple": false,
@@ -49,7 +50,7 @@
         "key": "organizations",
         "type": "multiselect",
         "label": "Organizations",
-        "description": "Which promotions to show events for. UFC and PFL are fully supported; Cage Warriors, KSW, ARES, Oktagon and Hexagone MMA are experimental.",
+        "description": "Which promotions to show events for. UFC and PFL are fully supported; Cage Warriors, KSW, ARES, Oktagon, Hexagone MMA and ACA are experimental.",
         "noSelectionText": "None selected",
         "placeholderText": "Search organizations...",
         "emptyText": "No organizations",
@@ -88,6 +89,11 @@
             "value": "hxmma",
             "label": "Hexagone MMA",
             "description": "Hexagone MMA (France)"
+          },
+          {
+            "value": "aca",
+            "label": "ACA",
+            "description": "Absolute Championship Akhmat"
           }
         ],
         "defaultValue": [

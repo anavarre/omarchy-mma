@@ -57,9 +57,9 @@ test("forOrganizations keeps only selected promotions' events", () => {
   assert.deepStrictEqual(M.forOrganizations(events, []), []);
 });
 
-test("organizationOptions lists UFC, PFL, Cage Warriors, KSW, ARES, Oktagon and Hexagone MMA", () => {
+test("organizationOptions lists UFC, PFL, Cage Warriors, KSW, ARES, Oktagon, Hexagone MMA and ACA", () => {
   const ids = M.organizationOptions().map((o) => o.value);
-  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw", "ksw", "ares", "oktagon", "hxmma"]);
+  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw", "ksw", "ares", "oktagon", "hxmma", "aca"]);
 });
 
 test("setting clamps", () => {
@@ -710,6 +710,34 @@ test("Hexagone MMA never shares an event id with the other promotions", () => {
   assert.ok(hx.every((e) => !others.has(e.id)));
 });
 
+// ------------------------------------------------------------ ACA (Wikipedia)
+
+const aca = M.parseWikipedia(JSON.stringify([JSON.parse(fixture("aca-2026-wiki.json")), { error: { code: "missingtitle" } }]), "aca", NOW, 120);
+
+test("ACA: the year's events are read in order, with venue and country", () => {
+  assert.strictEqual(aca.length, 13);
+  assert.strictEqual(aca[0].shortName, "ACA 198");
+  assert.strictEqual(aca[0].venue, "Sport Hall Colosseum · Grozny, Russia");
+  assert.strictEqual(aca[0].tz, "Europe/Moscow");
+  assert.strictEqual(aca[3].tz, "Europe/Moscow");
+  assert.ok(aca.every((e) => e.org === "aca" && e.orgTag === "ACA" && e.inline && e.dateOnly && e.id.startsWith("89")));
+  assert.deepStrictEqual(aca.map((e) => e.date), aca.map((e) => e.date).slice().sort());
+});
+
+test("ACA: results show winners and methods, announced cards neither", () => {
+  const done = aca.find((e) => e.shortName === "ACA 200");
+  assert.ok(done.finished);
+  assert.strictEqual(done.headliner.fighters[0].winner, true);
+  assert.strictEqual(done.headliner.method, "Unanimous Decision");
+  const next = aca.find((e) => e.shortName === "ACA 210");
+  assert.ok(!next.finished && next.fights.every((f) => !f.done && f.method === ""));
+});
+
+test("ACA never shares an event id with the other promotions", () => {
+  const others = new Set([...cw, ...ksw, ...oktagon].map((e) => e.id));
+  assert.ok(aca.every((e) => !others.has(e.id)));
+});
+
 // ------------------------------------------------------------- ARES (own site)
 //
 // The saved pages of aresfighting.com, as bin/mma-api ares prints them: the
@@ -882,6 +910,7 @@ test("providerOf: Cage Warriors, KSW and Oktagon read Wikipedia, ARES its own si
   assert.strictEqual(M.providerOf("cw"), "wikipedia");
   assert.strictEqual(M.providerOf("ksw"), "wikipedia");
   assert.strictEqual(M.providerOf("oktagon"), "wikipedia");
+  assert.strictEqual(M.providerOf("aca"), "wikipedia");
   assert.strictEqual(M.providerOf("ares"), "ares");
   assert.strictEqual(M.providerOf("hxmma"), "sherdog");
   assert.strictEqual(M.providerOf("ufc"), "espn");

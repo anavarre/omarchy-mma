@@ -12,7 +12,8 @@ var promotions = [
   { id: "ksw", experimental: true, label: "KSW", slug: "ksw", enabled: true, logo: "assets/ksw.png", tag: "KSW", provider: "wikipedia", wikiPage: "Konfrontacja_Sztuk_Walki", idBase: 8300000, description: "Konfrontacja Sztuk Walki" },
   { id: "ares", experimental: true, label: "ARES", slug: "ares", enabled: true, logo: "assets/ares.png", tag: "ARES", provider: "ares", idBase: 8600000, description: "ARES Fighting Championship" },
   { id: "oktagon", experimental: true, label: "Oktagon", slug: "oktagon", enabled: true, logo: "assets/oktagon.png", tag: "OKT", provider: "wikipedia", wikiPage: "Oktagon_MMA", idBase: 8700000, description: "Oktagon MMA" },
-  { id: "hxmma", experimental: true, label: "Hexagone MMA", slug: "hxmma", enabled: true, logo: "assets/hxmma.png", tag: "HX", provider: "sherdog", idBase: 8800000, description: "Hexagone MMA (France)" }
+  { id: "hxmma", experimental: true, label: "Hexagone MMA", slug: "hxmma", enabled: true, logo: "assets/hxmma.png", tag: "HX", provider: "sherdog", idBase: 8800000, description: "Hexagone MMA (France)" },
+  { id: "aca", experimental: true, label: "ACA", slug: "aca", enabled: true, logo: "assets/aca.png", tag: "ACA", provider: "wikipedia", wikiPage: "Absolute_Championship_Akhmat", idBase: 8900000, description: "Absolute Championship Akhmat" }
 ]
 
 var defaultOrganizations = ["ufc"]
@@ -232,7 +233,7 @@ var countryZones = {
   "austria": "Europe/Paris", "czech republic": "Europe/Paris", "czechia": "Europe/Paris", "denmark": "Europe/Paris",
   "sweden": "Europe/Paris", "norway": "Europe/Paris", "croatia": "Europe/Paris", "serbia": "Europe/Paris",
   "greece": "Europe/Athens", "finland": "Europe/Athens", "romania": "Europe/Athens", "bulgaria": "Europe/Athens",
-  "russia": "Europe/Moscow", "south africa": "Africa/Johannesburg", "india": "Asia/Kolkata", "thailand": "Asia/Bangkok",
+  "russia": "Europe/Moscow", "belarus": "Europe/Moscow", "south africa": "Africa/Johannesburg", "india": "Asia/Kolkata", "thailand": "Asia/Bangkok",
   "china": "Asia/Shanghai", "singapore": "Asia/Shanghai", "japan": "Asia/Tokyo", "brazil": "America/Sao_Paulo",
   "mexico": "America/Mexico_City", "new zealand": "Pacific/Auckland"
 }
@@ -979,7 +980,7 @@ function parseWikipedia(text, orgId, now, days) {
       var finished = allDone || nowMs - startMs > eventLengthMs + 12 * 3600 * 1000
       if (!finished && days !== undefined && startMs - nowMs > days * 86400000) return
       var fightCount = fights.length
-      var short = /^(?:XTB )?((?:Cage Warriors|KSW|Oktagon) \d+)/.exec(name)
+      var short = /^(?:XTB )?((?:Cage Warriors|KSW|Oktagon|ACA) \d+)/.exec(name)
       out.push({
         id: id,
         org: orgId,
