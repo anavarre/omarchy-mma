@@ -10,11 +10,11 @@
 #       An id written with a trailing "+" (finished fight) also adds that
 #       fight's status object, which names how it was won (KO, decision...).
 #
-#   mma-api wiki <cw|ksw> <year>...
+#   mma-api wiki <cw|ksw|oktagon> <year>...
 #       Cage Warriors has no ESPN coverage worth using and its own site sits
 #       behind a bot challenge; ESPN's KSW feed stops in December 2024. So their
-#       schedules and cards come from Wikipedia's "<year> in Cage Warriors" and
-#       "<year> in Konfrontacja Sztuk Walki" pages, fetched through the MediaWiki API. A JSON
+#       schedules and cards come from Wikipedia's "<year> in Cage Warriors",
+#       "<year> in Konfrontacja Sztuk Walki" and "<year> in Oktagon MMA" pages, fetched through the MediaWiki API. A JSON
 #       array of the API's answers, one per year; years whose request fails are
 #       left out, and it exits 1 when none came through. Model.js reads the wikitext.
 #
@@ -179,10 +179,11 @@ case "$cmd" in
     printf ']'
     ;;
   wiki)
-    [ $# -ge 2 ] && [ $# -le 5 ] || die "usage: wiki <cw|ksw> <year>..."
+    [ $# -ge 2 ] && [ $# -le 5 ] || die "usage: wiki <cw|ksw|oktagon> <year>..."
     case "$1" in
       cw) wiki_page=Cage_Warriors ;;
       ksw) wiki_page=Konfrontacja_Sztuk_Walki ;;
+      oktagon) wiki_page=Oktagon_MMA ;;
       *) die "bad organization" ;;
     esac
     shift

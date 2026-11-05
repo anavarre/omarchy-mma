@@ -25,7 +25,8 @@
       "fights",
       "cagewarriors",
       "ksw",
-      "ares"
+      "ares",
+      "oktagon"
     ],
     "allowMultiple": false,
     "defaultSection": "right",
@@ -47,7 +48,7 @@
         "key": "organizations",
         "type": "multiselect",
         "label": "Organizations",
-        "description": "Which promotions to show events for. UFC and PFL are fully supported; Cage Warriors, KSW and ARES are experimental.",
+        "description": "Which promotions to show events for. UFC and PFL are fully supported; Cage Warriors, KSW, ARES and Oktagon are experimental.",
         "noSelectionText": "None selected",
         "placeholderText": "Search organizations...",
         "emptyText": "No organizations",
@@ -76,6 +77,11 @@
             "value": "ares",
             "label": "ARES",
             "description": "ARES Fighting Championship"
+          },
+          {
+            "value": "oktagon",
+            "label": "Oktagon",
+            "description": "Oktagon MMA"
           }
         ],
         "defaultValue": [

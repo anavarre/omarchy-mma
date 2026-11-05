@@ -59,7 +59,7 @@ test("forOrganizations keeps only selected promotions' events", () => {
 
 test("organizationOptions lists UFC, PFL, Cage Warriors, KSW and ARES", () => {
   const ids = M.organizationOptions().map((o) => o.value);
-  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw", "ksw", "ares"]);
+  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw", "ksw", "ares", "oktagon"]);
 });
 
 test("setting clamps", () => {
@@ -640,6 +640,35 @@ test("KSW and Cage Warriors never share an event id", () => {
   assert.ok(ksw.every((e) => /^[0-9]+$/.test(e.id) && !ids.has(e.id)));
 });
 
+// ------------------------------------------------------- Oktagon (Wikipedia)
+
+const oktagon = M.parseWikipedia(JSON.stringify([JSON.parse(fixture("oktagon-2026-wiki.json")), { error: { code: "missingtitle" } }]), "oktagon", NOW, 120);
+
+test("Oktagon: the year's events are read in order, with venue and country", () => {
+  assert.strictEqual(oktagon.length, 19);
+  assert.strictEqual(oktagon[0].shortName, "Oktagon 82");
+  assert.strictEqual(oktagon[0].venue, "PSD Bank Dome · Düsseldorf, Germany");
+  assert.strictEqual(oktagon[0].tz, "Europe/Paris");
+  assert.strictEqual(oktagon[18].shortName, "Oktagon 100");
+  assert.ok(oktagon.every((e) => e.org === "oktagon" && e.orgTag === "OKT" && e.inline && e.dateOnly && e.id.startsWith("87")));
+  assert.deepStrictEqual(oktagon.map((e) => e.date), oktagon.map((e) => e.date).slice().sort());
+});
+
+test("Oktagon: results show winners and methods, announced cards neither", () => {
+  const done = oktagon.find((e) => e.shortName === "Oktagon 96");
+  assert.ok(done.finished);
+  assert.strictEqual(done.headliner.fighters[0].winner, true);
+  assert.strictEqual(done.headliner.method, "Unanimous Decision");
+  const next = oktagon.find((e) => e.shortName === "Oktagon 97");
+  assert.ok(!next.finished && next.fights.every((f) => !f.done && f.method === ""));
+  assert.strictEqual(next.url, "https://en.wikipedia.org/wiki/2026_in_Oktagon_MMA#Oktagon_97:_Severino_vs._Holzer");
+});
+
+test("Oktagon never shares an event id with the other promotions", () => {
+  const others = new Set([...cw, ...ksw, ...ares].map((e) => e.id));
+  assert.ok(oktagon.every((e) => !others.has(e.id)));
+});
+
 // ------------------------------------------------------------- ARES (own site)
 //
 // The saved pages of aresfighting.com, as bin/mma-api ares prints them: the
@@ -808,9 +837,10 @@ test("ESPN events are timed and fetch their card separately", () => {
   assert.ok(ufc.every((e) => e.dateOnly === false && e.inline === false));
 });
 
-test("providerOf: Cage Warriors and KSW read Wikipedia, ARES its own site, the others ESPN", () => {
+test("providerOf: Cage Warriors, KSW and Oktagon read Wikipedia, ARES its own site, the others ESPN", () => {
   assert.strictEqual(M.providerOf("cw"), "wikipedia");
   assert.strictEqual(M.providerOf("ksw"), "wikipedia");
+  assert.strictEqual(M.providerOf("oktagon"), "wikipedia");
   assert.strictEqual(M.providerOf("ares"), "ares");
   assert.strictEqual(M.providerOf("ufc"), "espn");
   assert.strictEqual(M.providerOf("nope"), "espn");

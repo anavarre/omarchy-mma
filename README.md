@@ -36,7 +36,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 
 | Setting | Default | |
 |---|---|---|
-| `organizations` | `["ufc"]` | Promotions to follow: `ufc`, `pfl`, `cw` (Cage Warriors), `ksw` or `ares`. UFC and PFL are fully supported; all others are experimental. |
+| `organizations` | `["ufc"]` | Promotions to follow: `ufc`, `pfl`, `cw` (Cage Warriors), `ksw`, `ares` or `oktagon`. UFC and PFL are fully supported; all others are experimental. |
 | `eventLimit` | `10` | Events listed at first, 1 to 30. More load as you scroll or arrow down. |
 | `lookaheadDays` | `120` | How far ahead to look. |
 | `refreshMinutes` | `180` | Background refresh interval. |
@@ -56,7 +56,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 - On a card, `↑`/`↓` scroll and `←` goes back.
 
 Logos are ESPN's league logos for UFC and PFL, the Wikipedia logos for Cage Warriors
-(emblem only, on a dark tile) and KSW, and ARES's own logo, bundled in `assets/`; they remain the
+(emblem only, on a dark tile) and KSW, ARES's own logo, and the Wikimedia Commons logo for Oktagon, bundled in `assets/`; they remain the
 property of their owners.
 
 ## Where the data comes from
@@ -71,15 +71,16 @@ ESPN's public JSON API. It needs no key, but it is unofficial and could change.
 - Fighter `order` 1 is the champion or higher-billed fighter and 2 is the
   challenger. ESPN lists them in no fixed order, so the plugin sorts by it.
 
-### Cage Warriors and KSW: Wikipedia
+### Cage Warriors, KSW and Oktagon: Wikipedia
 
 ESPN has next to no Cage Warriors coverage, and cagewarriors.com refuses
 programmatic clients (it sits behind a bot challenge, which this plugin does not
 try to get around). ESPN does list KSW (Konfrontacja Sztuk Walki), but its feed
-stops in December 2024. So both come from Wikipedia's
+stops in December 2024. Oktagon (Oktagon MMA, Czech Republic and Slovakia) is not on ESPN at all. So all three come from Wikipedia's
 "[2026 in Cage Warriors](https://en.wikipedia.org/wiki/2026_in_Cage_Warriors)" and
-"[2026 in Konfrontacja Sztuk Walki](https://en.wikipedia.org/wiki/2026_in_Konfrontacja_Sztuk_Walki)"
-pages, read through the MediaWiki API (`bin/mma-api wiki cw|ksw`). They are maintained by
+"[2026 in Konfrontacja Sztuk Walki](https://en.wikipedia.org/wiki/2026_in_Konfrontacja_Sztuk_Walki)" and
+"[2026 in Oktagon MMA](https://en.wikipedia.org/wiki/2026_in_Oktagon_MMA)"
+pages, read through the MediaWiki API (`bin/mma-api wiki cw|ksw|oktagon`). They are maintained by
 volunteers and are usually updated within hours of an announcement or a result.
 No key or account is needed.
 
@@ -115,7 +116,7 @@ sparingly: two listings, then one page per event.
 - The event link opens the event's page on aresfighting.com. This reads the
   site's HTML, so a redesign could break it until the parser is updated.
 
-Only UFC, PFL, Cage Warriors, KSW and ARES are available at the moment. Another promotion
+Only UFC, PFL, Cage Warriors, KSW, ARES and Oktagon are available at the moment. Another promotion
 needs a provider of its own; suggestions are welcome, please open an issue.
 
 Card details (segments, and Cage Warriors and KSW fighter records, which are looked up

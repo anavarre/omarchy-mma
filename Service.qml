@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Io
 import "Model.js" as Model
 
-// The one process-wide owner of everything fetched (ESPN, Wikipedia for Cage Warriors and KSW, and ARES's own site): the event list,
+// The one process-wide owner of everything fetched (ESPN, Wikipedia for Cage Warriors, KSW and Oktagon, and ARES's own site): the event list,
 // per-event cards and the refresh timer. The bar widget exists once per
 // monitor; they all read this instead of polling on their own.
 Item {

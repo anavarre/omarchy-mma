@@ -10,7 +10,8 @@ var promotions = [
   { id: "pfl", label: "PFL", slug: "pfl", enabled: true, logo: "assets/pfl.png", description: "Professional Fighters League" },
   { id: "cw", experimental: true, label: "Cage Warriors", slug: "cage-warriors", enabled: true, logo: "assets/cw.png", tag: "CW", provider: "wikipedia", wikiPage: "Cage_Warriors", idBase: 8000000, description: "Cage Warriors Fighting Championship" },
   { id: "ksw", experimental: true, label: "KSW", slug: "ksw", enabled: true, logo: "assets/ksw.png", tag: "KSW", provider: "wikipedia", wikiPage: "Konfrontacja_Sztuk_Walki", idBase: 8300000, description: "Konfrontacja Sztuk Walki" },
-  { id: "ares", experimental: true, label: "ARES", slug: "ares", enabled: true, logo: "assets/ares.png", tag: "ARES", provider: "ares", idBase: 8600000, description: "ARES Fighting Championship" }
+  { id: "ares", experimental: true, label: "ARES", slug: "ares", enabled: true, logo: "assets/ares.png", tag: "ARES", provider: "ares", idBase: 8600000, description: "ARES Fighting Championship" },
+  { id: "oktagon", experimental: true, label: "Oktagon", slug: "oktagon", enabled: true, logo: "assets/oktagon.png", tag: "OKT", provider: "wikipedia", wikiPage: "Oktagon_MMA", idBase: 8700000, description: "Oktagon MMA" }
 ]
 
 var defaultOrganizations = ["ufc"]
@@ -977,7 +978,7 @@ function parseWikipedia(text, orgId, now, days) {
       var finished = allDone || nowMs - startMs > eventLengthMs + 12 * 3600 * 1000
       if (!finished && days !== undefined && startMs - nowMs > days * 86400000) return
       var fightCount = fights.length
-      var short = /^(?:XTB )?((?:Cage Warriors|KSW) \d+)/.exec(name)
+      var short = /^(?:XTB )?((?:Cage Warriors|KSW|Oktagon) \d+)/.exec(name)
       out.push({
         id: id,
         org: orgId,
