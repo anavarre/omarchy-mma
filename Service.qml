@@ -160,6 +160,9 @@ Item {
       // Fighters without a record spin until the lookup answers; with nothing
       // to look up the card is final already.
       var names = Model.namesNeedingRecords(event, root.records).filter(function(n) { return !root.knownNa(n) })
+      // The card must exist before the lookup is queued: nextRecords skips
+      // jobs whose cards are gone, and would take this one for stale.
+      root.setCard(id, Model.buildCard(Model.withRecords(event, root.records, names.length === 0), {}), "", false)
       var dropped = root.queueRecords(event, names)
       // A card whose lookups did not fit the budget stays unsettled, so
       // opening it again asks again.
