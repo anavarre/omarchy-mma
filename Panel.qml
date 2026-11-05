@@ -187,7 +187,7 @@ Panel {
   // What the card has left for the scrolling body once the header, footer and
   // spacing are placed.
   readonly property real bodyMaxHeight: Math.max(Style.space(160),
-    panel.availableCardHeight - panel.verticalContentInset - header.implicitHeight - footer.implicitHeight - Style.space(20))
+    panel.availableCardHeight - panel.verticalContentInset - (header.visible ? header.implicitHeight : 0) - footer.implicitHeight - Style.space(20))
 
   QtObject {
     id: inertService
@@ -447,6 +447,8 @@ Panel {
         // ------------------------------------------------------------ header
         Column {
           id: header
+          // The event list needs no title; settings and a card do.
+          visible: root.showSettings || root.showCard
           width: parent.width
           spacing: Style.space(2)
 
@@ -454,7 +456,7 @@ Panel {
             width: parent.width
             elide: Text.ElideRight
             textFormat: Text.PlainText
-            text: root.showSettings ? "Settings" : root.showCard && root.currentEvent ? root.currentEvent.name : "Upcoming MMA events"
+            text: root.showSettings ? "Settings" : root.showCard && root.currentEvent ? root.currentEvent.name : ""
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: root.fs(Style.font.subtitle)
@@ -491,67 +493,70 @@ Panel {
             : ""
         }
 
-        // ------------------------------------------------------------ search
-        TextField {
-          id: searchField
+        // ------------------------------------------------- search + org filter
+        Row {
+          id: searchRow
           width: parent.width
+          spacing: Style.space(8)
           visible: !root.showSettings && !root.showCard
-          foreground: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: root.fs(Style.font.body)
-          placeholderText: "Search events or fighters"
-          text: root.query
-          onTextChanged: if (root.query !== text) root.query = text
-          Keys.onPressed: function(event) {
-            if (event.key === Qt.Key_Down) { root.moveSelection(1); event.accepted = true }
-            else if (event.key === Qt.Key_Up) { root.moveSelection(-1); event.accepted = true }
-            else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.openEvent(root.selected); event.accepted = true }
+
+          // Sized to the longest organization name (or "All") so the control
+          // never changes width as the filter or the loaded events change.
+          TextMetrics {
+            id: orgMetrics
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
           }
-          // Leaves the box, keeping the filter; Esc again closes the panel.
-          Keys.onEscapePressed: keys.forceActiveFocus()
-          Keys.onTabPressed: function(event) {
-            if (!root.switchPanel(event.modifiers & Qt.ShiftModifier ? -1 : 1)) event.accepted = false
+          readonly property real orgWidth: {
+            var labels = ["All"]
+            Model.promotions.forEach(function(p) { labels.push(p.label) })
+            root.orgChoices.forEach(function(o) { labels.push(o.label) })
+            var w = 0
+            for (var i = 0; i < labels.length; i++) {
+              orgMetrics.text = labels[i]
+              w = Math.max(w, orgMetrics.advanceWidth)
+            }
+            return Math.ceil(w) + Style.spacing.controlPaddingX * 2 + Style.spacing.md
+              + Style.font.body + Style.spacing.controlGap + Style.space(6)
           }
-        }
 
-        // ------------------------------------------------------- org filter
-        Flow {
-          id: orgBar
-          width: parent.width
-          spacing: Style.space(6)
-          visible: !root.showSettings && !root.showCard && root.orgChoices.length > 1
+          Dropdown {
+            id: orgDropdown
+            visible: root.orgChoices.length > 1
+            width: searchRow.orgWidth
+            showLabel: false
+            // Same height as the search box beside it.
+            rowHeight: searchField.height
+            fontFamily: root.fontFamily
+            foreground: root.foreground
+            accent: root.accent
+            options: [{ value: "", label: "All" }].concat(root.orgChoices.map(function(o) { return { value: o.id, label: o.label } }))
+            onChanged: function(v) { root.orgFilter = v }
+          }
+          // Dropdown assigns its own value on pick; keep it following the filter ("g" cycles it too).
+          Binding { target: orgDropdown; property: "value"; value: root.activeOrg }
 
-          Repeater {
-            model: [{ id: "", label: "All" }].concat(root.orgChoices)
-
-            Rectangle {
-              id: chip
-              required property var modelData
-              readonly property bool on: root.activeOrg === chip.modelData.id
-              width: chipText.implicitWidth + Style.space(20)
-              height: chipText.implicitHeight + Style.space(8)
-              radius: height / 2
-              color: chip.on ? Qt.alpha(root.accent, 0.18) : "transparent"
-              border.width: 1
-              border.color: chip.on ? root.accent : Qt.alpha(root.dim, 0.5)
-
-              Text {
-                id: chipText
-                anchors.centerIn: parent
-                text: chip.modelData.label
-                textFormat: Text.PlainText
-                color: chip.on ? root.accentText : root.dim
-                font.family: root.fontFamily
-                font.pixelSize: root.fs(Style.font.bodySmall)
-                font.bold: chip.on
-              }
-              MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.orgFilter = chip.modelData.id
-              }
+          TextField {
+            id: searchField
+            width: parent.width - (orgDropdown.visible ? orgDropdown.width + searchRow.spacing : 0)
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: root.fs(Style.font.body)
+            placeholderText: "Search events or fighters"
+            text: root.query
+            onTextChanged: if (root.query !== text) root.query = text
+            Keys.onPressed: function(event) {
+              if (event.key === Qt.Key_Down) { root.moveSelection(1); event.accepted = true }
+              else if (event.key === Qt.Key_Up) { root.moveSelection(-1); event.accepted = true }
+              else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.openEvent(root.selected); event.accepted = true }
+            }
+            // Leaves the box, keeping the filter; Esc again closes the panel.
+            Keys.onEscapePressed: keys.forceActiveFocus()
+            Keys.onTabPressed: function(event) {
+              if (!root.switchPanel(event.modifiers & Qt.ShiftModifier ? -1 : 1)) event.accepted = false
             }
           }
+
         }
 
         Text {
@@ -591,133 +596,158 @@ Panel {
               id: eventRepeater
               model: root.events
 
-              Rectangle {
-                id: row
+              Item {
+                id: entry
                 required property int index
                 required property var modelData
                 width: listColumn.width
-                height: Math.max(rowText.implicitHeight, tag.height) + Style.space(14)
-                radius: Style.space(6)
-                color: row.index === root.selected ? Qt.alpha(root.accent, 0.18) : "transparent"
+                height: row.y + row.height
+
+                // "Past events" / "Upcoming events" above the first event of each.
+                Text {
+                  id: sectionHeader
+                  visible: entry.index === 0
+                    || (root.events[entry.index - 1].finished === true) !== (entry.modelData.finished === true)
+                  height: visible ? implicitHeight + Style.space(8) : 0
+                  verticalAlignment: Text.AlignVCenter
+                  leftPadding: Style.space(8)
+                  textFormat: Text.PlainText
+                  text: (entry.modelData.finished === true ? "Past events" : "Upcoming events").toUpperCase()
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: root.fs(Style.font.bodySmall)
+                  font.bold: true
+                }
 
                 Rectangle {
-                  visible: row.index === root.selected
-                  anchors.left: parent.left
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: Style.space(3)
-                  height: parent.height - Style.space(12)
-                  radius: width / 2
-                  color: root.accent
-                }
+                  id: row
+                  readonly property int index: entry.index
+                  readonly property var modelData: entry.modelData
+                  y: sectionHeader.visible ? sectionHeader.height : 0
+                  width: listColumn.width
+                  height: Math.max(rowText.implicitHeight, tag.height) + Style.space(14)
+                  radius: Style.space(6)
+                  color: row.index === root.selected ? Qt.alpha(root.accent, 0.18) : "transparent"
 
-                // The promotion's logo, or a text tag when it has none.
-                Item {
-                  id: tag
-                  anchors.verticalCenter: parent.verticalCenter
-                  anchors.left: parent.left
-                  anchors.leftMargin: Style.space(8)
-                  width: Style.space(Math.round(52 * root.textScale))
-                  height: logoImage.visible ? width : tagBox.height
-
-                  Image {
-                    id: logoImage
-                    anchors.fill: parent
-                    visible: row.modelData.logo !== "" && status !== Image.Error
-                    source: row.modelData.logo !== "" ? Qt.resolvedUrl(row.modelData.logo) : ""
-                    fillMode: Image.PreserveAspectFit
-                    sourceSize.width: 128
-                    sourceSize.height: 128
-                    smooth: true
-                    mipmap: true
-                  }
                   Rectangle {
-                    id: tagBox
-                    visible: !logoImage.visible
-                    width: parent.width
-                    height: tagText.implicitHeight + Style.space(6)
-                    radius: Style.space(4)
-                    color: Qt.alpha(root.accent, 0.25)
+                    visible: row.index === root.selected
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(3)
+                    height: parent.height - Style.space(12)
+                    radius: width / 2
+                    color: root.accent
+                  }
+
+                  // The promotion's logo, or a text tag when it has none.
+                  Item {
+                    id: tag
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    anchors.leftMargin: Style.space(8)
+                    width: Style.space(Math.round(52 * root.textScale))
+                    height: logoImage.visible ? width : tagBox.height
+
+                    Image {
+                      id: logoImage
+                      anchors.fill: parent
+                      visible: row.modelData.logo !== "" && status !== Image.Error
+                      source: row.modelData.logo !== "" ? Qt.resolvedUrl(row.modelData.logo) : ""
+                      fillMode: Image.PreserveAspectFit
+                      sourceSize.width: 128
+                      sourceSize.height: 128
+                      smooth: true
+                      mipmap: true
+                    }
+                    Rectangle {
+                      id: tagBox
+                      visible: !logoImage.visible
+                      width: parent.width
+                      height: tagText.implicitHeight + Style.space(6)
+                      radius: Style.space(4)
+                      color: Qt.alpha(root.accent, 0.25)
+                      Text {
+                        id: tagText
+                        anchors.centerIn: parent
+                        // Short ("CW"), and elided rather than overflowing the box.
+                        width: Math.min(implicitWidth, parent.width - Style.space(6))
+                        elide: Text.ElideRight
+                        horizontalAlignment: Text.AlignHCenter
+                        text: row.modelData.orgTag
+                        textFormat: Text.PlainText
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: root.fs(Style.font.bodySmall)
+                        font.bold: true
+                      }
+                    }
+                  }
+
+                  Column {
+                    id: rowText
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: tag.right
+                    anchors.right: parent.right
+                    anchors.leftMargin: Style.space(10)
+                    anchors.rightMargin: Style.space(8)
+                    spacing: Style.space(2)
+
+                    Item {
+                      width: parent.width
+                      height: rowName.implicitHeight
+
+                      Text {
+                        id: rowName
+                        width: Math.min(implicitWidth, parent.width - (rowDone.visible ? rowDone.implicitWidth + Style.space(6) : 0))
+                        elide: Text.ElideRight
+                        textFormat: Text.PlainText
+                        text: row.modelData.name
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: root.fs(Style.font.body)
+                      }
+                      // The event is over.
+                      Text {
+                        id: rowDone
+                        anchors.left: rowName.right
+                        anchors.leftMargin: Style.space(6)
+                        anchors.verticalCenter: rowName.verticalCenter
+                        visible: row.modelData.finished === true
+                        text: "\u2713"
+                        color: root.good
+                        font.family: root.fontFamily
+                        font.pixelSize: root.fs(Style.font.body)
+                        font.bold: true
+                      }
+                    }
                     Text {
-                      id: tagText
-                      anchors.centerIn: parent
-                      // Short ("CW"), and elided rather than overflowing the box.
-                      width: Math.min(implicitWidth, parent.width - Style.space(6))
+                      width: parent.width
                       elide: Text.ElideRight
-                      horizontalAlignment: Text.AlignHCenter
-                      text: row.modelData.orgTag
                       textFormat: Text.PlainText
-                      color: root.foreground
+                      text: root.eventWhen(row.modelData)
+                      color: root.dim
                       font.family: root.fontFamily
                       font.pixelSize: root.fs(Style.font.bodySmall)
-                      font.bold: true
                     }
-                  }
-                }
-
-                Column {
-                  id: rowText
-                  anchors.verticalCenter: parent.verticalCenter
-                  anchors.left: tag.right
-                  anchors.right: parent.right
-                  anchors.leftMargin: Style.space(10)
-                  anchors.rightMargin: Style.space(8)
-                  spacing: Style.space(2)
-
-                  Item {
-                    width: parent.width
-                    height: rowName.implicitHeight
-
                     Text {
-                      id: rowName
-                      width: Math.min(implicitWidth, parent.width - (rowDone.visible ? rowDone.implicitWidth + Style.space(6) : 0))
+                      width: parent.width
                       elide: Text.ElideRight
                       textFormat: Text.PlainText
-                      text: row.modelData.name
-                      color: root.foreground
+                      visible: text !== ""
+                      text: root.eventWhere(row.modelData)
+                      color: root.dim
                       font.family: root.fontFamily
-                      font.pixelSize: root.fs(Style.font.body)
-                    }
-                    // The event is over.
-                    Text {
-                      id: rowDone
-                      anchors.left: rowName.right
-                      anchors.leftMargin: Style.space(6)
-                      anchors.verticalCenter: rowName.verticalCenter
-                      visible: row.modelData.finished === true
-                      text: "\u2713"
-                      color: root.good
-                      font.family: root.fontFamily
-                      font.pixelSize: root.fs(Style.font.body)
-                      font.bold: true
+                      font.pixelSize: root.fs(Style.font.bodySmall)
                     }
                   }
-                  Text {
-                    width: parent.width
-                    elide: Text.ElideRight
-                    textFormat: Text.PlainText
-                    text: root.eventWhen(row.modelData)
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: root.fs(Style.font.bodySmall)
-                  }
-                  Text {
-                    width: parent.width
-                    elide: Text.ElideRight
-                    textFormat: Text.PlainText
-                    visible: text !== ""
-                    text: root.eventWhere(row.modelData)
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: root.fs(Style.font.bodySmall)
-                  }
-                }
 
-                MouseArea {
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onEntered: root.selected = row.index
-                  onClicked: root.openEvent(row.index)
+                  MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onEntered: root.selected = row.index
+                    onClicked: root.openEvent(row.index)
+                  }
                 }
               }
             }
