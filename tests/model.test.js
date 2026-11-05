@@ -32,7 +32,7 @@ test("selectedOrganizations defaults to UFC only", () => {
 
 test("selectedOrganizations keeps an explicit choice and drops unfetchable ones", () => {
   assert.deepStrictEqual(M.selectedOrganizations(["pfl", "ufc"]), ["pfl", "ufc"]);
-  assert.deepStrictEqual(M.selectedOrganizations(["one", "ufc", "nope", "ufc"]), ["ufc"]);
+  assert.deepStrictEqual(M.selectedOrganizations(["bellator", "ufc", "nope", "ufc"]), ["ufc"]);
   assert.deepStrictEqual(M.selectedOrganizations([]), []);
 });
 
@@ -40,13 +40,13 @@ test("toggleOrganization adds and removes enabled promotions only", () => {
   assert.deepStrictEqual(M.toggleOrganization(["ufc"], "pfl", true), ["ufc", "pfl"]);
   assert.deepStrictEqual(M.toggleOrganization(["pfl", "ufc"], "ufc", false), ["pfl"]);
   assert.deepStrictEqual(M.toggleOrganization(["ufc"], "ufc", false), []);
-  assert.deepStrictEqual(M.toggleOrganization(["ufc"], "one", true), ["ufc"]);
+  assert.deepStrictEqual(M.toggleOrganization(["ufc"], "bellator", true), ["ufc"]);
 });
 
 test("UFC and PFL have bundled logos, and PFL is off by default", () => {
   assert.strictEqual(M.logoFor("ufc"), "assets/ufc.png");
   assert.strictEqual(M.logoFor("pfl"), "assets/pfl.png");
-  assert.strictEqual(M.logoFor("one"), "");
+  assert.strictEqual(M.logoFor("bellator"), "");
   assert.deepStrictEqual(M.selectedOrganizations(undefined), ["ufc"]);
   for (const f of ["ufc", "pfl"]) assert.ok(fs.existsSync(__dirname + "/../assets/" + f + ".png"));
 });
@@ -57,9 +57,9 @@ test("forOrganizations keeps only selected promotions' events", () => {
   assert.deepStrictEqual(M.forOrganizations(events, []), []);
 });
 
-test("organizationOptions lists UFC, PFL, Cage Warriors, KSW, ARES, Oktagon, Hexagone MMA and ACA", () => {
+test("organizationOptions lists UFC, PFL, Cage Warriors, KSW, ARES, Oktagon, Hexagone MMA, ACA and ONE", () => {
   const ids = M.organizationOptions().map((o) => o.value);
-  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw", "ksw", "ares", "oktagon", "hxmma", "aca"]);
+  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw", "ksw", "ares", "oktagon", "hxmma", "aca", "one"]);
 });
 
 test("setting clamps", () => {
@@ -738,6 +738,44 @@ test("ACA never shares an event id with the other promotions", () => {
   assert.ok(aca.every((e) => !others.has(e.id)));
 });
 
+// ------------------------------------------------- ONE Championship (Wikipedia)
+//
+// ONE mixes MMA with Muay Thai, kickboxing and grappling; only the MMA bouts
+// are kept, and an event without any is left out.
+
+const one = M.parseWikipedia(fixture("one-2026-wiki.json"), "one", NOW, 120);
+
+test("ONE: only MMA bouts are listed, with the sport dropped from the weight class", () => {
+  const samurai = one.find((e) => e.shortName === "ONE Samurai 4");
+  assert.deepStrictEqual(samurai.fights.map((f) => f.weightClass).sort(), ["Flyweight", "Lightweight", "Women's Atomweight"]);
+  assert.ok(one.every((e) => e.fights.every((f) => !/muay|kickbox|grappl|mma/i.test(f.weightClass))));
+  assert.strictEqual(samurai.venue, "Ariake Arena · Tokyo, Japan");
+  assert.strictEqual(samurai.tz, "Asia/Tokyo");
+  assert.ok(one.every((e) => e.org === "one" && e.orgTag === "ONE" && e.inline && e.dateOnly && e.id.startsWith("90")));
+});
+
+test("ONE: events with no MMA bout or no announced card are dropped", () => {
+  assert.deepStrictEqual(one.map((e) => e.shortName), ["ONE Fight Night 48", "ONE Friday Fights 175", "ONE Samurai 4", "ONE Fight Night 49", "ONE Fight Night 50"]);
+});
+
+test("ONE: results show winners and methods, announced cards neither", () => {
+  const done = one.find((e) => e.shortName === "ONE Samurai 4");
+  assert.ok(done.finished);
+  const abe = done.fights.find((f) => f.weightClass === "Lightweight");
+  assert.strictEqual(abe.fighters[0].name, "Kota Abe");
+  assert.strictEqual(abe.fighters[0].winner, true);
+  assert.strictEqual(abe.method, "TKO (punches)");
+  assert.strictEqual(done.fights.find((f) => f.weightClass === "Women's Atomweight").method, "Unanimous Decision");
+  const next = one.find((e) => e.shortName === "ONE Fight Night 49");
+  assert.ok(!next.finished && next.fights.every((f) => !f.done && f.method === ""));
+  assert.strictEqual(next.headliner.fighters[0].name, "Lucas Gabriel");
+});
+
+test("ONE never shares an event id with the other promotions", () => {
+  const others = new Set([...cw, ...ksw, ...oktagon, ...aca].map((e) => e.id));
+  assert.ok(one.every((e) => !others.has(e.id)));
+});
+
 // ------------------------------------------------------------- ARES (own site)
 //
 // The saved pages of aresfighting.com, as bin/mma-api ares prints them: the
@@ -911,6 +949,7 @@ test("providerOf: Cage Warriors, KSW and Oktagon read Wikipedia, ARES its own si
   assert.strictEqual(M.providerOf("ksw"), "wikipedia");
   assert.strictEqual(M.providerOf("oktagon"), "wikipedia");
   assert.strictEqual(M.providerOf("aca"), "wikipedia");
+  assert.strictEqual(M.providerOf("one"), "wikipedia");
   assert.strictEqual(M.providerOf("ares"), "ares");
   assert.strictEqual(M.providerOf("hxmma"), "sherdog");
   assert.strictEqual(M.providerOf("ufc"), "espn");
@@ -1191,3 +1230,10 @@ test("the event cache is capped on load", () => {
   const text = M.serializeCache(M.mergeEvents([M.parseWikipedia(hostileWiki(150), "cw", NOW, 365)], Infinity, NOW, 7), NOW);
   assert.ok(M.parseCache(text).events.length <= M.remoteEventMax);
 });
+
+test("filterByOrg and eventOrganizations narrow events to one organization", () => {
+  const list = [{ id: 1, org: "pfl" }, { id: 2, org: "ufc" }, { id: 3, org: "ufc" }]
+  assert.deepEqual(M.filterByOrg(list, "ufc").map((e) => e.id), [2, 3])
+  assert.equal(M.filterByOrg(list, "").length, 3)
+  assert.deepEqual(M.eventOrganizations(list).map((o) => o.id), ["ufc", "pfl"])
+})

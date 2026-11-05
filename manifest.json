@@ -28,6 +28,8 @@
       "ares",
       "oktagon",
       "aca",
+      "one",
+      "onechampionship",
       "hexagone"
     ],
     "allowMultiple": false,
@@ -50,7 +52,7 @@
         "key": "organizations",
         "type": "multiselect",
         "label": "Organizations",
-        "description": "Which promotions to show events for. UFC and PFL are fully supported; Cage Warriors, KSW, ARES, Oktagon, Hexagone MMA and ACA are experimental.",
+        "description": "Which promotions to show events for. UFC and PFL are fully supported; Cage Warriors, KSW, ARES, Oktagon, Hexagone MMA, ACA and ONE (MMA bouts only) are experimental.",
         "noSelectionText": "None selected",
         "placeholderText": "Search organizations...",
         "emptyText": "No organizations",
@@ -94,6 +96,11 @@
             "value": "aca",
             "label": "ACA",
             "description": "Absolute Championship Akhmat"
+          },
+          {
+            "value": "one",
+            "label": "ONE",
+            "description": "ONE Championship (MMA bouts only)"
           }
         ],
         "defaultValue": [

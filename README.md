@@ -36,7 +36,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 
 | Setting | Default | |
 |---|---|---|
-| `organizations` | `["ufc"]` | Promotions to follow: `ufc`, `pfl`, `cw` (Cage Warriors), `ksw`, `ares`, `oktagon`, `hxmma` (Hexagone MMA) or `aca` (Absolute Championship Akhmat). UFC and PFL are fully supported; all others are experimental. |
+| `organizations` | `["ufc"]` | Promotions to follow: `ufc`, `pfl`, `cw` (Cage Warriors), `ksw`, `ares`, `oktagon`, `hxmma` (Hexagone MMA), `aca` (Absolute Championship Akhmat) or `one` (ONE Championship, MMA bouts only). UFC and PFL are fully supported; all others are experimental. |
 | `eventLimit` | `10` | Events listed at first, 1 to 30. More load as you scroll or arrow down. |
 | `lookaheadDays` | `120` | How far ahead to look. |
 | `refreshMinutes` | `180` | Background refresh interval. |
@@ -56,7 +56,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 - On a card, `↑`/`↓` scroll and `←` goes back.
 
 Logos are ESPN's league logos for UFC and PFL, the Wikipedia logos for Cage Warriors
-(emblem only, on a dark tile) and KSW, ARES's own logo, the Wikimedia Commons logo for Oktagon, the Hexagone MMA emblem from Wikimedia Commons, and the ACA logo from Wikipedia, bundled in `assets/`; they remain the
+(emblem only, on a dark tile) and KSW, ARES's own logo, the Wikimedia Commons logo for Oktagon, the Hexagone MMA emblem from Wikimedia Commons, the ACA logo from Wikipedia and the ONE Championship logo from Wikipedia, bundled in `assets/`; they remain the
 property of their owners.
 
 ## Where the data comes from
@@ -71,17 +71,18 @@ ESPN's public JSON API. It needs no key, but it is unofficial and could change.
 - Fighter `order` 1 is the champion or higher-billed fighter and 2 is the
   challenger. ESPN lists them in no fixed order, so the plugin sorts by it.
 
-### Cage Warriors, KSW, Oktagon and ACA: Wikipedia
+### Cage Warriors, KSW, Oktagon, ACA and ONE: Wikipedia
 
 ESPN has next to no Cage Warriors coverage, and cagewarriors.com refuses
 programmatic clients (it sits behind a bot challenge, which this plugin does not
 try to get around). ESPN does list KSW (Konfrontacja Sztuk Walki), but its feed
-stops in December 2024. Oktagon (Oktagon MMA, Czech Republic and Slovakia) is not on ESPN at all. ACA (Absolute Championship Akhmat, Russia) is not on ESPN either. So all four come from Wikipedia's
+stops in December 2024. Oktagon (Oktagon MMA, Czech Republic and Slovakia) is not on ESPN at all. ACA (Absolute Championship Akhmat, Russia) is not on ESPN either. So all five come from Wikipedia's
 "[2026 in Cage Warriors](https://en.wikipedia.org/wiki/2026_in_Cage_Warriors)" and
 "[2026 in Konfrontacja Sztuk Walki](https://en.wikipedia.org/wiki/2026_in_Konfrontacja_Sztuk_Walki)" and
 "[2026 in Oktagon MMA](https://en.wikipedia.org/wiki/2026_in_Oktagon_MMA)" and
 "[2026 in Absolute Championship Akhmat](https://en.wikipedia.org/wiki/2026_in_Absolute_Championship_Akhmat)"
-pages, read through the MediaWiki API (`bin/mma-api wiki cw|ksw|oktagon|aca`). They are maintained by
+"[2026 in ONE Championship](https://en.wikipedia.org/wiki/2026_in_ONE_Championship)"
+pages, read through the MediaWiki API (`bin/mma-api wiki cw|ksw|oktagon|aca|one`). They are maintained by
 volunteers and are usually updated within hours of an announcement or a result.
 No key or account is needed.
 
@@ -126,7 +127,7 @@ recent events, with fighter records and, for finished fights, winners and method
 This reads Sherdog's HTML, so a redesign could break it until the parser is updated, and
 Sherdog gives a day, not a start time. The event link opens the event on sherdog.com.
 
-Only UFC, PFL, Cage Warriors, KSW, ARES, Oktagon, Hexagone MMA and ACA are available at the moment. Another promotion
+Only UFC, PFL, Cage Warriors, KSW, ARES, Oktagon, Hexagone MMA, ACA and ONE are available at the moment. Another promotion
 needs a provider of its own; suggestions are welcome, please open an issue.
 
 Card details (segments, and Cage Warriors and KSW fighter records, which are looked up

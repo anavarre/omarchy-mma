@@ -101,8 +101,16 @@ Panel {
   // "Events to show" setting at first, then another page each time the
   // selection or the scroll reaches the end.
   property string query: ""
-  readonly property var allEvents: Model.filterEvents(
-    Model.visibleEvents(root.mma.events, root.now, root.keepFinishedDays), root.query)
+  property string orgFilter: ""
+  readonly property var visibleAll: Model.visibleEvents(root.mma.events, root.now, root.keepFinishedDays)
+  readonly property var orgChoices: Model.eventOrganizations(root.visibleAll)
+  // A filter whose organization has no events left falls back to "All".
+  readonly property string activeOrg: root.orgChoices.some(function(o) { return o.id === root.orgFilter }) ? root.orgFilter : ""
+  readonly property var allEvents: Model.filterEvents(Model.filterByOrg(root.visibleAll, root.activeOrg), root.query)
+  function cycleOrg() {
+    var ids = [""].concat(root.orgChoices.map(function(o) { return o.id }))
+    root.orgFilter = ids[(ids.indexOf(root.activeOrg) + 1) % ids.length]
+  }
   readonly property int pageSize: Model.clampEventLimit(root.mma.eventLimit)
   property int shownCount: root.pageSize
   readonly property var events: root.allEvents.slice(0, root.shownCount)
@@ -201,6 +209,7 @@ Panel {
       root.eventId = ""
       root.showSettings = false
       root.query = ""
+      root.orgFilter = ""
       root.selected = 0
       root.shownCount = root.pageSize
       listView.contentY = 0
@@ -210,6 +219,11 @@ Panel {
   }
 
   onQueryChanged: {
+    root.shownCount = root.pageSize
+    root.selected = 0
+    listView.contentY = 0
+  }
+  onActiveOrgChanged: {
     root.shownCount = root.pageSize
     root.selected = 0
     listView.contentY = 0
@@ -416,6 +430,7 @@ Panel {
           else if (text === "t") root.pickTimeZone(root.timeZone === "venue" ? "local" : "venue")
         }
         else if (text === "f" && !root.showCard) searchField.forceActiveFocus()
+        else if (text === "g" && !root.showCard) root.cycleOrg()
         else if (text === "s") root.openSettings()
         else if (text === "r") root.mma.hardRefresh()
         else if (text === "o") {
@@ -496,6 +511,46 @@ Panel {
           Keys.onEscapePressed: keys.forceActiveFocus()
           Keys.onTabPressed: function(event) {
             if (!root.switchPanel(event.modifiers & Qt.ShiftModifier ? -1 : 1)) event.accepted = false
+          }
+        }
+
+        // ------------------------------------------------------- org filter
+        Flow {
+          id: orgBar
+          width: parent.width
+          spacing: Style.space(6)
+          visible: !root.showSettings && !root.showCard && root.orgChoices.length > 1
+
+          Repeater {
+            model: [{ id: "", label: "All" }].concat(root.orgChoices)
+
+            Rectangle {
+              id: chip
+              required property var modelData
+              readonly property bool on: root.activeOrg === chip.modelData.id
+              width: chipText.implicitWidth + Style.space(20)
+              height: chipText.implicitHeight + Style.space(8)
+              radius: height / 2
+              color: chip.on ? Qt.alpha(root.accent, 0.18) : "transparent"
+              border.width: 1
+              border.color: chip.on ? root.accent : Qt.alpha(root.dim, 0.5)
+
+              Text {
+                id: chipText
+                anchors.centerIn: parent
+                text: chip.modelData.label
+                textFormat: Text.PlainText
+                color: chip.on ? root.accentText : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: root.fs(Style.font.bodySmall)
+                font.bold: chip.on
+              }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.orgFilter = chip.modelData.id
+              }
+            }
           }
         }
 
@@ -1303,6 +1358,13 @@ Panel {
           Text {
             visible: !root.showSettings && !root.showCard
             text: "f Search"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: root.fs(Style.font.bodySmall)
+          }
+          Text {
+            visible: !root.showSettings && !root.showCard && root.orgChoices.length > 1
+            text: "g Org"
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: root.fs(Style.font.bodySmall)

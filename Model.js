@@ -13,7 +13,8 @@ var promotions = [
   { id: "ares", experimental: true, label: "ARES", slug: "ares", enabled: true, logo: "assets/ares.png", tag: "ARES", provider: "ares", idBase: 8600000, description: "ARES Fighting Championship" },
   { id: "oktagon", experimental: true, label: "Oktagon", slug: "oktagon", enabled: true, logo: "assets/oktagon.png", tag: "OKT", provider: "wikipedia", wikiPage: "Oktagon_MMA", idBase: 8700000, description: "Oktagon MMA" },
   { id: "hxmma", experimental: true, label: "Hexagone MMA", slug: "hxmma", enabled: true, logo: "assets/hxmma.png", tag: "HX", provider: "sherdog", idBase: 8800000, description: "Hexagone MMA (France)" },
-  { id: "aca", experimental: true, label: "ACA", slug: "aca", enabled: true, logo: "assets/aca.png", tag: "ACA", provider: "wikipedia", wikiPage: "Absolute_Championship_Akhmat", idBase: 8900000, description: "Absolute Championship Akhmat" }
+  { id: "aca", experimental: true, label: "ACA", slug: "aca", enabled: true, logo: "assets/aca.png", tag: "ACA", provider: "wikipedia", wikiPage: "Absolute_Championship_Akhmat", idBase: 8900000, description: "Absolute Championship Akhmat" },
+  { id: "one", experimental: true, label: "ONE", slug: "one", enabled: true, logo: "assets/one.png", tag: "ONE", provider: "wikipedia", wikiPage: "ONE_Championship", mmaOnly: true, idBase: 9000000, description: "ONE Championship (MMA bouts only)" }
 ]
 
 var defaultOrganizations = ["ufc"]
@@ -527,6 +528,20 @@ function filterEvents(events, query) {
   })
 }
 
+// Events of one organization; an empty `org` keeps them all.
+function filterByOrg(events, org) {
+  if (!org) return events
+  return events.filter(function(e) { return e.org === org })
+}
+
+// The organizations present in `events`, in promotion order, as { id, label }.
+function eventOrganizations(events) {
+  var seen = ({})
+  events.forEach(function(e) { seen[e.org] = true })
+  return promotions.filter(function(p) { return seen[p.id] })
+    .map(function(p) { return { id: p.id, label: p.label } })
+}
+
 // The soonest event still to come, if any.
 function nextEvent(events) {
   for (var i = 0; i < events.length; i++) if (events[i].finished !== true) return events[i]
@@ -878,6 +893,26 @@ function wikiBouts(section) {
   return out
 }
 
+// ONE Championship's page has no bout templates, only a results table whose
+// rows read: weight class (it ends in the sport: "Lightweight MMA", "Flyweight
+// Muay Thai"), fighter, "def."/"vs.", fighter, method, round, time, notes.
+// Returns the MMA rows only, in the shape wikiBouts gives.
+function wikiTableBouts(section) {
+  var out = []
+  var table = /^\{\|[\s\S]*?^\|\}/m.exec(section.split(/^===\s*Results\s*===/mi)[1] || "")
+  if (!table) return out
+  table[0].split(/^\|-[^\n]*$/m).forEach(function(row) {
+    if (out.length >= maxFightsPerEvent) return
+    var cells = row.split("\n").filter(function(l) { return /^\|(?![}+-])/.test(l) }).map(function(l) {
+      return l.slice(1).replace(/^\s*(?:[a-z]+\s*=\s*"?[^|"\[{]*"?\s*)+\|(?!\|)/i, "")
+    })
+    if (cells.length < 7 || !/\bMMA\s*$/.test(wikiPlain(cells[0]))) return
+    cells[0] = wikiPlain(cells[0]).replace(/\s*\bMMA\s*$/, "")
+    out.push({ segment: "main", parts: cells })
+  })
+  return out
+}
+
 function wikiFighter(raw, winner) {
   var name = wikiPlain(raw)
   var crowned = /\((?:c|ic)\)/i.test(name)
@@ -966,7 +1001,9 @@ function parseWikipedia(text, orgId, now, days) {
       if (date === "") return
       var intro = sec.slice(box.index + box[0].length).split(/^===/m)[0]
       if (/\b(cancell?ed|postponed)\b/i.test(wikiPlain(intro))) return
-      var bouts = wikiBouts(sec)
+      var bouts = promo && promo.mmaOnly ? wikiTableBouts(sec) : wikiBouts(sec)
+      // A promotion that mixes sports lists only its MMA events.
+      if (promo && promo.mmaOnly && bouts.length === 0) return
       // The listed order has the main event first; the model wants it last.
       var fights = bouts.map(wikiFight).reverse()
       var number = /(\d+)/.exec(heading)
@@ -980,7 +1017,7 @@ function parseWikipedia(text, orgId, now, days) {
       var finished = allDone || nowMs - startMs > eventLengthMs + 12 * 3600 * 1000
       if (!finished && days !== undefined && startMs - nowMs > days * 86400000) return
       var fightCount = fights.length
-      var short = /^(?:XTB )?((?:Cage Warriors|KSW|Oktagon|ACA) \d+)/.exec(name)
+      var short = /^(?:XTB )?((?:Cage Warriors|KSW|Oktagon|ACA|ONE (?:Fight Night|Samurai|Friday Fights)) \d+)/.exec(name)
       out.push({
         id: id,
         org: orgId,
