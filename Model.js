@@ -4,14 +4,15 @@
 // QML types so they can be unit-tested with node (tests/model.test.js).
 
 // Promotions the settings pane offers. `enabled` ones have a data provider:
-// "espn" (the default), "wikipedia" (see parseWikipedia) or "ares" (parseAres).
+// "espn" (the default), "wikipedia" (see parseWikipedia), "ares" (parseAres) or "sherdog" (parseSherdog).
 var promotions = [
   { id: "ufc", label: "UFC", slug: "ufc", enabled: true, logo: "assets/ufc.png", description: "Ultimate Fighting Championship" },
   { id: "pfl", label: "PFL", slug: "pfl", enabled: true, logo: "assets/pfl.png", description: "Professional Fighters League" },
   { id: "cw", experimental: true, label: "Cage Warriors", slug: "cage-warriors", enabled: true, logo: "assets/cw.png", tag: "CW", provider: "wikipedia", wikiPage: "Cage_Warriors", idBase: 8000000, description: "Cage Warriors Fighting Championship" },
   { id: "ksw", experimental: true, label: "KSW", slug: "ksw", enabled: true, logo: "assets/ksw.png", tag: "KSW", provider: "wikipedia", wikiPage: "Konfrontacja_Sztuk_Walki", idBase: 8300000, description: "Konfrontacja Sztuk Walki" },
   { id: "ares", experimental: true, label: "ARES", slug: "ares", enabled: true, logo: "assets/ares.png", tag: "ARES", provider: "ares", idBase: 8600000, description: "ARES Fighting Championship" },
-  { id: "oktagon", experimental: true, label: "Oktagon", slug: "oktagon", enabled: true, logo: "assets/oktagon.png", tag: "OKT", provider: "wikipedia", wikiPage: "Oktagon_MMA", idBase: 8700000, description: "Oktagon MMA" }
+  { id: "oktagon", experimental: true, label: "Oktagon", slug: "oktagon", enabled: true, logo: "assets/oktagon.png", tag: "OKT", provider: "wikipedia", wikiPage: "Oktagon_MMA", idBase: 8700000, description: "Oktagon MMA" },
+  { id: "hxmma", experimental: true, label: "Hexagone MMA", slug: "hxmma", enabled: true, logo: "assets/hxmma.png", tag: "HX", provider: "sherdog", idBase: 8800000, description: "Hexagone MMA (France)" }
 ]
 
 var defaultOrganizations = ["ufc"]
@@ -1206,6 +1207,145 @@ function parseAres(text, now, days) {
     // Only the pages bin/mma-api fetched (the recent ones) become events.
     if (!path || name === "" || !when || results[path[1]] === undefined) return
     add(name, when, aresFights(str(results[path[1]])), true, safeUrl("https://www.aresfighting.com" + path[1]))
+  })
+  return sortEvents(out)
+}
+
+// ---------------------------------------------------------------- sherdog
+//
+// Hexagone MMA (France) is on neither ESPN nor Wikipedia, so its events are read
+// from Sherdog (bin/mma-api sherdog): the event pages of its organization page.
+// Like Wikipedia's, these events carry their whole card (`inline`), records
+// included. Sherdog gives a day, not a start time.
+
+// Sherdog writes a method as "Decision (Split)" or "TKO (Elbow and Punches)".
+function sherdogMethod(text) {
+  var s = htmlText(text)
+  var d = /^decision\s*\(?\s*(unanimous|split|majority)?/i.exec(s)
+  if (d) return d[1] ? d[1].charAt(0).toUpperCase() + d[1].slice(1).toLowerCase() + " Decision" : "Decision"
+  return s.slice(0, 80)
+}
+
+// One fight from the markup of its two fighters: { names, records, results }.
+function sherdogFight(block, segmentIndex, number) {
+  var names = []
+  var nameRe = /itemprop="name">([\s\S]*?)<\/span>/g
+  var n
+  while ((n = nameRe.exec(block)) !== null && names.length < 2) names.push(htmlText(n[1]))
+  if (names.length < 2) return null
+  var records = []
+  var recRe = /class="record">\s*(?:<em>)?\s*([0-9]{1,3}-[0-9]{1,3}-[0-9]{1,3})/g
+  while ((n = recRe.exec(block)) !== null && records.length < 2) records.push(n[1])
+  var results = []
+  var resRe = /class="final_result ([a-z_]+)"/g
+  while ((n = resRe.exec(block)) !== null && results.length < 2) results.push(n[1])
+  var weight = /class="weight_class">([\s\S]*?)<\/span>/.exec(block)
+  var done = results.length === 2 && results.every(function(r) { return r !== "yet_to_come" })
+  var winby = /class="winby"><b>([\s\S]*?)<\/b>/.exec(block) || /<em>Method<\/em>\s*<br\s*\/?>([\s\S]*?)<\/td>/.exec(block)
+  var round = /class="winby"[\s\S]*?<\/td>\s*<td>\s*([0-9]+)\s*<\/td>\s*<td>\s*([0-9:]+)\s*<\/td>/.exec(block)
+    || /<em>Round<\/em>\s*<br\s*\/?>\s*([0-9]+)[\s\S]*?<em>Time<\/em>\s*<br\s*\/?>\s*([0-9:]+)/.exec(block)
+  var method = done ? (winby ? sherdogMethod(winby[1]) : "") : ""
+  if (done && method === "" && results[0] === "draw") method = "Draw"
+  return { names: names, records: records, results: results, done: done, method: method,
+    weightClass: weight ? htmlText(weight[1]) : "", champion: /class="title_fight"/.test(block),
+    round: round ? roundNumber(round[1]) : 0, clock: round ? round[2] : "" }
+}
+
+// The fights of an event page as wikiFight makes them: the main event comes
+// first in the page's markup, the model wants it last.
+function sherdogFights(page) {
+  var raw = []
+  var start = page.indexOf('class="fight_card"')
+  if (start >= 0) {
+    var tableAt = page.indexOf('class="new_table_holder"', start)
+    var main = sherdogFight(page.slice(start, tableAt >= 0 ? tableAt : page.length), 0, 0)
+    if (main) raw.push(main)
+    if (tableAt >= 0) {
+      page.slice(tableAt).split(/<tr itemprop="subEvent"/).slice(1, maxFightsPerEvent + 1).forEach(function(row) {
+        var f = sherdogFight(row, 0, 0)
+        if (f) raw.push(f)
+      })
+    }
+  }
+  return raw.slice(0, maxFightsPerEvent).map(function(b, index) {
+    var fighters = [0, 1].map(function(k) {
+      var tba = isTba(b.names[k])
+      return { name: tba ? "TBA" : b.names[k], shortName: tba ? "TBA" : b.names[k],
+        record: !tba && b.records[k] !== undefined && recordShape.test(b.records[k]) ? b.records[k] : "",
+        country: "", winner: b.done && b.results[k] === "win", tba: tba }
+    })
+    return {
+      id: String(index + 1),
+      weightClass: b.weightClass,
+      rounds: 0,
+      startDate: "",
+      status: b.done ? "STATUS_FINAL" : "STATUS_SCHEDULED",
+      done: b.done,
+      round: b.round,
+      clock: b.clock,
+      fighters: fighters,
+      segment: "main",
+      matchNumber: index + 1,
+      champion: b.champion,
+      method: b.method
+    }
+  }).reverse()
+}
+
+// Events from what `bin/mma-api sherdog` prints. Upcoming events further than
+// `days` ahead are dropped.
+function parseSherdog(text, orgId, now, days) {
+  var data = typeof text === "string" ? parseJson(text) : text
+  if (!isObject(data) || !isObject(data.events)) return []
+  var promo = promotionById(orgId)
+  if (!promo) return []
+  var nowMs = now === undefined ? Date.now() : Number(now)
+  var out = []
+  var seen = ({})
+  Object.keys(data.events).slice(0, 20).forEach(function(path) {
+    if (!/^\/events\/[A-Za-z0-9_-]+$/.test(path)) return
+    var page = str(data.events[path])
+    var title = htmlText((/<h1[^>]*>([\s\S]*?)<\/h1>/.exec(page) || [])[1])
+    var day = /class="info">\s*<span><meta itemprop="startDate" content="(\d{4})-(\d{2})-(\d{2})/.exec(page)
+    if (title === "" || !day) return
+    var when = new Date(Date.UTC(Number(day[1]), Number(day[2]) - 1, Number(day[3]), 12))
+    if (isNaN(when.getTime())) return
+    var number = /\bHXMMA\s+(\d+)\b/i.exec(title)
+    var sherdogId = /-(\d+)$/.exec(path)
+    var id = String(promo.idBase + (number ? Number(number[1]) : 100000 + (sherdogId ? Number(sherdogId[1]) % 100000 : 0)))
+    if (seen[id]) return
+    seen[id] = true
+    var place = htmlText((/<span itemprop="location">([\s\S]*?)<\/span>/.exec(page) || [])[1])
+    var comma = place.indexOf(",")
+    var venue = comma > 0 ? place.slice(0, comma).trim() + " · " + place.slice(comma + 1).trim() : place
+    var country = place.slice(place.lastIndexOf(",") + 1).trim()
+    var fights = sherdogFights(page)
+    var startMs = when.getTime()
+    var over = (fights.length > 0 && fights.every(function(f) { return f.done })) || nowMs - startMs > eventLengthMs + 12 * 3600 * 1000
+    if (!over && days !== undefined && startMs - nowMs > days * 86400000) return
+    var count = fights.length
+    var short = /^(HXMMA \d+)/i.exec(title)
+    out.push({
+      id: id,
+      org: orgId,
+      orgLabel: promo.label,
+      orgTag: tagFor(orgId),
+      logo: logoFor(orgId),
+      slug: promo.slug,
+      name: title.indexOf(" - ") > 0 ? title.slice(title.indexOf(" - ") + 3) : title,
+      shortName: short ? short[1].toUpperCase() : title,
+      date: when.toISOString(),
+      dateOnly: true,
+      inline: true,
+      finished: over,
+      venue: venue,
+      tz: zoneForAddress({ country: country }),
+      broadcast: "",
+      url: safeUrl("https://www.sherdog.com" + path),
+      fights: fights,
+      fightCount: count,
+      headliner: count > 0 ? fights[count - 1] : null
+    })
   })
   return sortEvents(out)
 }

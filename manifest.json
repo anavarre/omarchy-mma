@@ -26,7 +26,8 @@
       "cagewarriors",
       "ksw",
       "ares",
-      "oktagon"
+      "oktagon",
+      "hexagone"
     ],
     "allowMultiple": false,
     "defaultSection": "right",
@@ -48,7 +49,7 @@
         "key": "organizations",
         "type": "multiselect",
         "label": "Organizations",
-        "description": "Which promotions to show events for. UFC and PFL are fully supported; Cage Warriors, KSW, ARES and Oktagon are experimental.",
+        "description": "Which promotions to show events for. UFC and PFL are fully supported; Cage Warriors, KSW, ARES, Oktagon and Hexagone MMA are experimental.",
         "noSelectionText": "None selected",
         "placeholderText": "Search organizations...",
         "emptyText": "No organizations",
@@ -82,6 +83,11 @@
             "value": "oktagon",
             "label": "Oktagon",
             "description": "Oktagon MMA"
+          },
+          {
+            "value": "hxmma",
+            "label": "Hexagone MMA",
+            "description": "Hexagone MMA (France)"
           }
         ],
         "defaultValue": [

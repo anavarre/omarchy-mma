@@ -28,6 +28,14 @@
 #       "results": {path: html}}. Model.js reads the HTML. It exits 1 when
 #       neither listing came through.
 #
+#   mma-api sherdog <hxmma> <days>
+#       Hexagone MMA (France) is on neither ESPN nor Wikipedia, so its schedule
+#       comes from its Sherdog organization page: the upcoming and recent event
+#       tabs, plus the page of each upcoming event (at most MAX_SHERDOG_UPCOMING)
+#       and of each event of the last <days> days (at most MAX_SHERDOG_PAST).
+#       One JSON object: {"org": html, "events": {path: html}}. Model.js reads
+#       the HTML. It exits 1 when the organization page did not come through.
+#
 #   mma-api records <name>...
 #       Wikipedia's cards carry no fight records, so the fighters' W-L-D come
 #       from Sherdog's fighter pages. A JSON object mapping every name to e.g.
@@ -56,6 +64,8 @@ MAX_FIGHTS=40
 # Pages fetched for ARES: card pages of upcoming events, result pages of past ones.
 MAX_ARES_UPCOMING=8
 MAX_ARES_PAST=6
+MAX_SHERDOG_UPCOMING=8
+MAX_SHERDOG_PAST=6
 # ESPN's largest answer is well under 1 MB; refuse anything far beyond that.
 MAX_BYTES=8388608
 
@@ -256,6 +266,46 @@ case "$cmd" in
     done
     printf '}}'
     ;;
+  sherdog)
+    [ $# -eq 2 ] && [ "$1" = "hxmma" ] && [[ $2 =~ ^[0-9]{1,4}$ ]] || die "usage: sherdog <hxmma> <days>"
+    back=$2
+    tmp=$(mktemp -d) || exit 1
+    trap 'rm -rf "$tmp"' EXIT
+    fetch "$SHERDOG_BASE/organizations/Hexagone-MMA-16693" "$WIKI_UA" > "$tmp/org" 2> /dev/null && [ -s "$tmp/org" ] || exit 1
+    flat=$(tr '\n\r' '  ' < "$tmp/org")
+    # The page holds both tabs; each row names the event's path and its day.
+    rows() {
+      grep -oE "document\.location='/events/[A-Za-z0-9_-]+'|itemprop=\"startDate\" content=\"[0-9]{4}-[0-9]{2}-[0-9]{2}" \
+        | sed -E "s|.*location='(/events/[^']*)'|\1|; s|.*content=\"||" | paste -d' ' - - 
+    }
+    upcoming_html=${flat#*id=\"upcoming_tab\"}
+    recent_html=${upcoming_html#*id=\"recent_tab\"}
+    upcoming_html=${upcoming_html%%id=\"recent_tab\"*}
+    paths=$(printf '%s' "$upcoming_html" | rows | awk '{print $1}' | head -n "$MAX_SHERDOG_UPCOMING")
+    cutoff=$(date -u -d "-$back days" +%Y-%m-%d 2> /dev/null) || cutoff=0000-00-00
+    past=$(printf '%s' "$recent_html" | rows | while read -r path d; do
+        [[ $path =~ ^/events/[A-Za-z0-9_-]+$ ]] && [[ $d > $cutoff || $d == "$cutoff" ]] && printf '%s\n' "$path"
+      done | head -n "$MAX_SHERDOG_PAST")
+    paths=$(printf '%s\n%s\n' "$paths" "$past" | grep -E '^/events/[A-Za-z0-9_-]+$' | awk '!seen[$0]++')
+    n=0
+    for path in $paths; do
+      n=$((n + 1))
+      key=${path//\//_}
+      { fetch "$SHERDOG_BASE$path" "$WIKI_UA" > "$tmp/event.$key" 2> /dev/null || rm -f "$tmp/event.$key"; } &
+      if [ $((n % PARALLEL)) -eq 0 ]; then wait; fi
+    done
+    wait
+    printf '{"org":'; jstr < "$tmp/org"
+    printf ',"events":{'
+    sep=""
+    for path in $paths; do
+      key=${path//\//_}
+      [ -s "$tmp/event.$key" ] || continue
+      printf '%s"%s":' "$sep" "$path"; jstr < "$tmp/event.$key"
+      sep=","
+    done
+    printf '}}'
+    ;;
   records)
     [ $# -ge 1 ] && [ $# -le $((MAX_FIGHTS * 2)) ] || die "usage: records <name>..."
     tmp=$(mktemp -d) || exit 1
@@ -284,6 +334,6 @@ case "$cmd" in
     [ "$ok" -eq 1 ] || exit 1
     ;;
   *)
-    die "usage: mma-api events|card|wiki|ares|records ..."
+    die "usage: mma-api events|card|wiki|ares|sherdog|records ..."
     ;;
 esac

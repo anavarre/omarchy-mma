@@ -36,7 +36,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 
 | Setting | Default | |
 |---|---|---|
-| `organizations` | `["ufc"]` | Promotions to follow: `ufc`, `pfl`, `cw` (Cage Warriors), `ksw`, `ares` or `oktagon`. UFC and PFL are fully supported; all others are experimental. |
+| `organizations` | `["ufc"]` | Promotions to follow: `ufc`, `pfl`, `cw` (Cage Warriors), `ksw`, `ares`, `oktagon` or `hxmma` (Hexagone MMA). UFC and PFL are fully supported; all others are experimental. |
 | `eventLimit` | `10` | Events listed at first, 1 to 30. More load as you scroll or arrow down. |
 | `lookaheadDays` | `120` | How far ahead to look. |
 | `refreshMinutes` | `180` | Background refresh interval. |
@@ -56,7 +56,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 - On a card, `↑`/`↓` scroll and `←` goes back.
 
 Logos are ESPN's league logos for UFC and PFL, the Wikipedia logos for Cage Warriors
-(emblem only, on a dark tile) and KSW, ARES's own logo, and the Wikimedia Commons logo for Oktagon, bundled in `assets/`; they remain the
+(emblem only, on a dark tile) and KSW, ARES's own logo, the Wikimedia Commons logo for Oktagon, and the Hexagone MMA emblem from Wikimedia Commons, bundled in `assets/`; they remain the
 property of their owners.
 
 ## Where the data comes from
@@ -116,7 +116,16 @@ sparingly: two listings, then one page per event.
 - The event link opens the event's page on aresfighting.com. This reads the
   site's HTML, so a redesign could break it until the parser is updated.
 
-Only UFC, PFL, Cage Warriors, KSW, ARES and Oktagon are available at the moment. Another promotion
+### Hexagone MMA: Sherdog
+
+Hexagone MMA (France) is on neither ESPN nor Wikipedia. Its schedule and cards come from
+its [Sherdog organization page](https://www.sherdog.com/organizations/Hexagone-MMA-16693)
+and the event pages it links (`bin/mma-api sherdog hxmma <days>`): the upcoming and
+recent events, with fighter records and, for finished fights, winners and methods.
+This reads Sherdog's HTML, so a redesign could break it until the parser is updated, and
+Sherdog gives a day, not a start time. The event link opens the event on sherdog.com.
+
+Only UFC, PFL, Cage Warriors, KSW, ARES, Oktagon and Hexagone MMA are available at the moment. Another promotion
 needs a provider of its own; suggestions are welcome, please open an issue.
 
 Card details (segments, and Cage Warriors and KSW fighter records, which are looked up

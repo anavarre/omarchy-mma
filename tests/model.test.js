@@ -57,9 +57,9 @@ test("forOrganizations keeps only selected promotions' events", () => {
   assert.deepStrictEqual(M.forOrganizations(events, []), []);
 });
 
-test("organizationOptions lists UFC, PFL, Cage Warriors, KSW and ARES", () => {
+test("organizationOptions lists UFC, PFL, Cage Warriors, KSW, ARES, Oktagon and Hexagone MMA", () => {
   const ids = M.organizationOptions().map((o) => o.value);
-  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw", "ksw", "ares", "oktagon"]);
+  assert.deepStrictEqual(ids, ["ufc", "pfl", "cw", "ksw", "ares", "oktagon", "hxmma"]);
 });
 
 test("setting clamps", () => {
@@ -669,6 +669,47 @@ test("Oktagon never shares an event id with the other promotions", () => {
   assert.ok(oktagon.every((e) => !others.has(e.id)));
 });
 
+// ------------------------------------------------------ Hexagone MMA (Sherdog)
+//
+// The event pages of Hexagone MMA's Sherdog organization page, as
+// bin/mma-api sherdog hxmma prints them (scripts and styles stripped).
+
+const hx = M.parseSherdog(fixture("hxmma-2026.json"), "hxmma", Date.parse("2026-11-05T12:00:00Z"), 120);
+
+test("Hexagone MMA: events are read in order, with venue and country", () => {
+  assert.deepStrictEqual(hx.map((e) => e.shortName), ["HXMMA 46", "HXMMA 47", "HXMMA 48", "HXMMA 49"]);
+  assert.strictEqual(hx[1].name, "Hexagone MMA 47");
+  assert.strictEqual(hx[1].venue, "Zenith Toulouse · Toulouse, France");
+  assert.strictEqual(hx[1].tz, "Europe/Paris");
+  assert.ok(hx.every((e) => e.org === "hxmma" && e.orgTag === "HX" && e.inline && e.dateOnly && e.id.startsWith("88")));
+  assert.strictEqual(hx[0].url, "https://www.sherdog.com/events/HXMMA-46-Hexagone-MMA-46-Series-5-Rouen-113782");
+});
+
+test("Hexagone MMA: results show winners and methods, announced cards neither", () => {
+  const done = hx[1];
+  assert.ok(done.finished && done.fightCount === 11);
+  assert.deepStrictEqual(done.headliner.fighters.map((f) => [f.name, f.winner]), [["Nicolae Bivol", true], ["David Sipra", false]]);
+  assert.strictEqual(done.headliner.method, "TKO (Elbow and Punches)");
+  assert.strictEqual(done.headliner.round, 1);
+  assert.ok(done.fights.some((f) => f.method === "Split Decision"));
+  const next = hx[3];
+  assert.ok(!next.finished && next.fights.every((f) => !f.done && f.method === ""));
+  assert.strictEqual(next.headliner.fighters[0].name, "Theo Ulrich");
+  assert.strictEqual(next.headliner.fighters[0].record, "8-0-0");
+  assert.ok(next.headliner.champion);
+});
+
+test("Hexagone MMA: events beyond the lookahead are dropped, junk is ignored", () => {
+  assert.strictEqual(M.parseSherdog(fixture("hxmma-2026.json"), "hxmma", Date.parse("2026-11-05T12:00:00Z"), 7).length, 3);
+  assert.deepStrictEqual(M.parseSherdog("nope", "hxmma", NOW, 120), []);
+  assert.deepStrictEqual(M.parseSherdog(JSON.stringify({ events: { "/x/../y": "<h1>a</h1>" } }), "hxmma", NOW, 120), []);
+});
+
+test("Hexagone MMA never shares an event id with the other promotions", () => {
+  const others = new Set([...cw, ...ksw, ...ares, ...oktagon].map((e) => e.id));
+  assert.ok(hx.every((e) => !others.has(e.id)));
+});
+
 // ------------------------------------------------------------- ARES (own site)
 //
 // The saved pages of aresfighting.com, as bin/mma-api ares prints them: the
@@ -842,6 +883,7 @@ test("providerOf: Cage Warriors, KSW and Oktagon read Wikipedia, ARES its own si
   assert.strictEqual(M.providerOf("ksw"), "wikipedia");
   assert.strictEqual(M.providerOf("oktagon"), "wikipedia");
   assert.strictEqual(M.providerOf("ares"), "ares");
+  assert.strictEqual(M.providerOf("hxmma"), "sherdog");
   assert.strictEqual(M.providerOf("ufc"), "espn");
   assert.strictEqual(M.providerOf("nope"), "espn");
 });

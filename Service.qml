@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Io
 import "Model.js" as Model
 
-// The one process-wide owner of everything fetched (ESPN, Wikipedia for Cage Warriors, KSW and Oktagon, and ARES's own site): the event list,
+// The one process-wide owner of everything fetched (ESPN, Wikipedia for Cage Warriors, KSW and Oktagon, ARES's own site and Sherdog for Hexagone MMA): the event list,
 // per-event cards and the refresh timer. The bar widget exists once per
 // monitor; they all read this instead of polling on their own.
 Item {
@@ -102,7 +102,9 @@ Item {
       ? ["/usr/bin/bash", root.api, "wiki", org].concat(Model.wikiYears(now, days, back))
       : provider === "ares"
         ? ["/usr/bin/bash", root.api, "ares", String(back)]
-        : ["/usr/bin/bash", root.api, "events", promo.slug, Model.dateRange(now, days, back)]
+        : provider === "sherdog"
+          ? ["/usr/bin/bash", root.api, "sherdog", org, String(back)]
+          : ["/usr/bin/bash", root.api, "events", promo.slug, Model.dateRange(now, days, back)]
     eventsProcess.running = true
   }
 
@@ -290,7 +292,9 @@ Item {
             ? Model.parseWikipedia(eventsOut.text, org, Date.now(), days)
             : provider === "ares"
               ? Model.parseAres(eventsOut.text, Date.now(), days)
-              : Model.parseScoreboard(eventsOut.text, org)
+              : provider === "sherdog"
+                ? Model.parseSherdog(eventsOut.text, org, Date.now(), days)
+                : Model.parseScoreboard(eventsOut.text, org)
           var g = root.gathered
           g[eventsProcess.org] = parsed
           root.gathered = g
