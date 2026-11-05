@@ -29,8 +29,20 @@ var recordQueueBudget = 40
 // What the card cache keeps, in memory and on disk: the newest entries only.
 var cacheSegmentMax = 60
 var cacheRecordMax = 500
-// A fighter Sherdog would not answer for is not asked again for this long.
-var blockedRetryMs = 5 * 60 * 1000
+// A fighter Sherdog would not answer for is not asked again for this long
+// (the card cache's 12 hours): a vendor that refuses is left alone, and the
+// hard refresh does not reset this either.
+var blockedRetryMs = 12 * 60 * 60 * 1000
+// A refresh the user asks for (r, middle-click) is ignored when the last one
+// was this recent: key repeat must not turn into a request storm.
+var manualRefreshMinMs = 30 * 1000
+// bin/mma-api already caps every answer; the service still refuses to parse
+// anything beyond this, so a runaway response can never be fed to the parsers
+// (which run on the shell's GUI thread).
+var maxResponseChars = 16 * 1024 * 1024
+// Hosts an event link may point to. ESPN's link field is remote-controlled,
+// so the browser is only ever sent to one of the sources themselves.
+var linkHosts = ["espn.com", "wikipedia.org", "aresfighting.com", "sherdog.com"]
 var refreshChoices = [60, 120, 180, 360, 720, 1440]
 var lookaheadChoices = [30, 60, 90, 120, 180, 365]
 // How many days a finished event stays listed, with a check mark.
@@ -421,11 +433,16 @@ function broadcastText(comp) {
   return isObject(b) ? list(b.names).map(String).join(", ") : ""
 }
 
-// A URL that may be handed to the browser launcher: https only, no
-// whitespace or quoting characters. Anything else becomes "".
+// A URL that may be handed to the browser launcher: https only, on one of the
+// sources' own hosts (or a subdomain), no whitespace or quoting characters.
+// Anything else becomes "".
 function safeUrl(href) {
   var s = String(href || "")
-  return /^https:\/\/[^\s"'<>\\]+$/.test(s) ? s : ""
+  var m = /^https:\/\/([a-z0-9.-]{1,253})(?:[/?#][^\s"'<>\\]*)?$/i.exec(s)
+  if (!m) return ""
+  var host = m[1].toLowerCase()
+  var allowed = linkHosts.some(function(h) { return host === h || host.slice(-(h.length + 1)) === "." + h })
+  return allowed ? s : ""
 }
 
 // The event's ESPN page, from the link marked as the event's own.
@@ -848,13 +865,21 @@ function wikiYears(now, days, back) {
 
 // Wikitext reduced to the plain text a reader sees: links, templates, refs and
 // emphasis removed.
+//
+// Every lazy or open-ended match in this file is bounded ({0,n}). The input
+// is remote, and Wikipedia's is editable by anyone: an unbounded lazy run
+// against a page that opens a construct and never closes it scans to the end
+// of the page once per opener, which is quadratic and froze the shell for
+// minutes in tests. With a bound, each opener costs at most n steps. Where
+// only the first occurrence matters, the regex runs on a slice at it instead,
+// so a page full of openers costs one scan, not one per opener.
 function wikiPlain(text) {
-  var s = str(text)
-  s = s.replace(/<ref[^>]*\/>/gi, "").replace(/<ref[^>]*>[\s\S]*?<\/ref>/gi, "")
-  s = s.replace(/<!--[\s\S]*?-->/g, "").replace(/<br\s*\/?>/gi, " ")
-  s = s.replace(/<[^>]+>/g, "")
-  s = s.replace(/\{\{(?:flagicon|flag|nowrap)[^{}]*\}\}/gi, "")
-  s = s.replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1")
+  var s = str(text).slice(0, plainMax)
+  s = s.replace(/<ref[^>]{0,500}\/>/gi, "").replace(/<ref[^>]{0,500}>[\s\S]{0,5000}?<\/ref>/gi, "")
+  s = s.replace(/<!--[\s\S]{0,20000}?-->/g, "").replace(/<br\s*\/?>/gi, " ")
+  s = s.replace(/<[^>]{0,1000}>/g, "")
+  s = s.replace(/\{\{(?:flagicon|flag|nowrap)[^{}]{0,500}\}\}/gi, "")
+  s = s.replace(/\[\[(?:[^\]|]{0,500}\|)?([^\]]{0,1000})\]\]/g, "$1")
   s = s.replace(/'{2,}/g, "")
   return s.replace(/\s+/g, " ").trim()
 }
@@ -867,12 +892,12 @@ function wikiMethod(text) {
   var s = wikiPlain(text)
   var m = /^(Decision|Draw)\s*\(\s*(unanimous|split|majority)\s*\)/i.exec(s)
   if (m) return capitalized(m[2]) + " " + capitalized(m[1])
-  return s.replace(/\s*\((?=[^)]*\d\s*[–-]\s*\d)[^)]*\)\s*$/, "").slice(0, 80)
+  return s.replace(/\s*\((?=[^)]{0,200}\d\s*[–-]\s*\d)[^)]{0,200}\)\s*$/, "").slice(0, 80)
 }
 
 function wikiSegment(label) {
-  var s = wikiPlain(label).toLowerCase()
-  if (/early|prelim.*2/.test(s)) return "prelims2"
+  var s = wikiPlain(str(label).slice(0, 300)).toLowerCase()
+  if (/early|prelim.{0,100}2/.test(s)) return "prelims2"
   if (/prelim/.test(s)) return "prelims1"
   return "main"
 }
@@ -882,13 +907,22 @@ function wikiSegment(label) {
 function wikiBouts(section) {
   var out = []
   var segment = "main"
-  // The one-line card template must be tried first: the bout's lazy match
-  // would otherwise run on through the bouts after it.
-  var re = /\{\{MMAevent card\|([^}\n]*)\}\}|\{\{MMAevent bout([\s\S]*?)\n\}\}/g
-  var m
-  while ((m = re.exec(section)) !== null && out.length < maxFightsPerEvent) {
-    if (m[1] !== undefined) { segment = wikiSegment(m[1].split("|")[0]); continue }
-    out.push({ segment: segment, parts: String(m[2]).split(/\n\|/).slice(1) })
+  // The section is cut at every template opener, then each body is read up
+  // to its own close with indexOf: one pass, whatever the page repeats.
+  var pieces = String(section).split(/\{\{MMAevent (card|bout)\b/)
+  for (var i = 1; i + 1 < pieces.length && out.length < maxFightsPerEvent; i += 2) {
+    var body = pieces[i + 1]
+    if (pieces[i] === "card") {
+      // "{{MMAevent card|Main card}}": one line, nothing nested.
+      var close = body.indexOf("}}")
+      var line = body.indexOf("\n")
+      if (body.charAt(0) !== "|" || close < 0 || close > 500 || (line >= 0 && line < close)) continue
+      segment = wikiSegment(body.slice(1, close).split("|")[0])
+      continue
+    }
+    var end = body.indexOf("\n}}")
+    if (end < 0) continue
+    out.push({ segment: segment, parts: body.slice(0, Math.min(end, 8000)).split(/\n\|/).slice(1) })
   }
   return out
 }
@@ -899,12 +933,17 @@ function wikiBouts(section) {
 // Returns the MMA rows only, in the shape wikiBouts gives.
 function wikiTableBouts(section) {
   var out = []
-  var table = /^\{\|[\s\S]*?^\|\}/m.exec(section.split(/^===\s*Results\s*===/mi)[1] || "")
+  // The first table after the Results heading, read at its first opener only.
+  var after = section.split(/^===\s*Results\s*===/mi)[1] || ""
+  var table = /^\{\|[\s\S]{0,200000}?^\|\}/m.exec(atFirst(after, /^\{\|/m, 200000))
   if (!table) return out
   table[0].split(/^\|-[^\n]*$/m).forEach(function(row) {
     if (out.length >= maxFightsPerEvent) return
     var cells = row.split("\n").filter(function(l) { return /^\|(?![}+-])/.test(l) }).map(function(l) {
-      return l.slice(1).replace(/^\s*(?:[a-z]+\s*=\s*"?[^|"\[{]*"?\s*)+\|(?!\|)/i, "")
+      // Cell attributes ("align=center|", 'style="..." |') are dropped. The
+      // value class excludes "=", so each repetition eats exactly one
+      // attribute and a line of "a=a=a=..." cannot be split in 2^n ways.
+      return l.slice(1, 2001).replace(/^\s*(?:[a-z]+\s*=\s*"?[^|"\[{=]{0,200}"?\s*)+\|(?!\|)/i, "")
     })
     if (cells.length < 7 || !/\bMMA\s*$/.test(wikiPlain(cells[0]))) return
     cells[0] = wikiPlain(cells[0]).replace(/\s*\bMMA\s*$/, "")
@@ -994,12 +1033,15 @@ function parseWikipedia(text, orgId, now, days) {
     var sections = wikitext.split(/^==\s*(?!=)/m).slice(1)
     sections.slice(0, wikiSectionMax).forEach(function(sec, i) {
       var nameMatch = /^([^=\n]+?)\s*==\s*\n/.exec(sec)
-      var box = /\{\{Infobox MMA event[\s\S]*?\n\}\}/i.exec(sec)
+      // The infobox is read at its first opener only.
+      var boxAt = sec.search(/\{\{Infobox MMA event/i)
+      var box = boxAt < 0 ? null : /^\{\{Infobox MMA event[\s\S]{0,20000}?\n\}\}/i.exec(sec.slice(boxAt, boxAt + 20000))
       if (!nameMatch || !box) return
       var heading = wikiPlain(nameMatch[1])
       var date = wikiDate(infoboxField(box[0], "date"))
       if (date === "") return
-      var intro = sec.slice(box.index + box[0].length).split(/^===/m)[0]
+      // A cancellation is announced in the first lines after the infobox.
+      var intro = sec.slice(boxAt + box[0].length, boxAt + box[0].length + 4000).split(/^===/m)[0]
       if (/\b(cancell?ed|postponed)\b/i.test(wikiPlain(intro))) return
       var bouts = promo && promo.mmaOnly ? wikiTableBouts(sec) : wikiBouts(sec)
       // A promotion that mixes sports lists only its MMA events.
@@ -1053,9 +1095,26 @@ function parseWikipedia(text, orgId, now, days) {
 // whole card (`inline`), records included. The listings give a day; an upcoming
 // event's card page also gives the start time, in Paris time.
 
+// The `max` characters of `s` from its first `marker` on, or "" when there is
+// none: a regex anchored with ^ then runs once, at that occurrence, instead of
+// once per occurrence of the marker across a page built to repeat it.
+function atFirst(s, marker, max) {
+  var text = String(s)
+  var at = marker instanceof RegExp ? text.search(marker) : text.indexOf(marker)
+  return at < 0 ? "" : text.slice(at, at + max)
+}
+
+// The most markup one fight's block, or one event page's heading, is given:
+// the inner matches are bounded, but a block is only as cheap as its length.
+var blockMax = 20000
+// The most markup wikiPlain and htmlText read: every caller hands them a
+// bounded slice already (a heading, a cell, a template body), and no text a
+// reader sees is longer than this.
+var plainMax = 40000
+
 // The site's markup reduced to the text a reader sees.
 function htmlText(s) {
-  return str(s).replace(/<!--[\s\S]*?-->/g, "").replace(/<[^>]*>/g, " ")
+  return str(s).slice(0, plainMax).replace(/<!--[\s\S]{0,20000}?-->/g, "").replace(/<[^>]{0,2000}>/g, " ")
     .replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, function(m, e) {
       var named = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " ", rsquo: "’", lsquo: "‘" }
       var code = e.charAt(0) !== "#" ? -1 : (e.charAt(1).toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10))
@@ -1124,26 +1183,30 @@ function aresMethod(text) {
 function aresFights(html) {
   var out = []
   var segment = "main"
-  var re = /<h2[^>]*>([\s\S]*?)<\/h2>|class="(?:[^"]*\s)?fighter-line(?:\s[^"]*)?"/g
-  var marks = []
-  var m
-  while ((m = re.exec(html)) !== null) marks.push({ at: m.index, end: re.lastIndex, heading: m[1] })
-  for (var i = 0; i < marks.length && out.length < maxFightsPerEvent; i++) {
-    if (marks[i].heading !== undefined) { segment = wikiSegment(htmlText(marks[i].heading)); continue }
-    var block = html.slice(marks[i].end, i + 1 < marks.length ? marks[i + 1].at : html.length)
+  // The page is cut at every segment heading and every fight block, in one
+  // pass; a heading's text is then read up to its close with indexOf.
+  var pieces = String(html).split(/(<h2[^>]{0,500}>)|(class="(?:[^"]{0,200}\s)?fighter-line(?:\s[^"]{0,200})?")/)
+  for (var i = 1; i + 2 < pieces.length && out.length < maxFightsPerEvent; i += 3) {
+    var text = str(pieces[i + 2])
+    if (pieces[i] !== undefined) {
+      var close = text.indexOf("</h2>")
+      if (close >= 0 && close <= 2000) segment = wikiSegment(htmlText(text.slice(0, close)))
+      continue
+    }
+    var block = text.slice(0, blockMax)
     var names = []
-    var nameRe = /<h4[^>]*>([\s\S]*?)<\/h4>/g
+    var nameRe = /<h4[^>]{0,500}>([\s\S]{0,1000}?)<\/h4>/g
     var n
     while ((n = nameRe.exec(block)) !== null && names.length < 2) names.push(htmlText(n[1]))
     if (names.length < 2) continue
     var values = {}
-    var valRe = /combat-round-title">([\s\S]*?)<\/span>\s*<span class="combat-round-value">([\s\S]*?)<\/span>/g
+    var valRe = /combat-round-title">([\s\S]{0,500}?)<\/span>\s*<span class="combat-round-value">([\s\S]{0,500}?)<\/span>/g
     while ((n = valRe.exec(block)) !== null) values[htmlText(n[1]).toLowerCase()] = htmlText(n[2])
-    var records = /class="records"[\s\S]*?stat-left">([^<]*)<[\s\S]*?stat-right">([^<]*)</.exec(block)
-    var weight = /<h3[^>]*>([\s\S]*?)<\/h3>/.exec(block)
+    var records = /^class="records"[\s\S]{0,3000}?stat-left">([^<]{0,100})<[\s\S]{0,3000}?stat-right">([^<]{0,100})</.exec(atFirst(block, 'class="records"', 7000))
+    var weight = /<h3[^>]{0,500}>([\s\S]{0,1000}?)<\/h3>/.exec(block)
     // The site has no title flag. Its photo of a champion is named "...-CHAMP-...",
     // so a main event whose first fighter has one is taken as a title fight.
-    var photo = /class="fighter-one"[\s\S]*?<img[^>]*\ssrc="([^"]*)"/.exec(block)
+    var photo = /^class="fighter-one"[\s\S]{0,5000}?<img[^>]{0,2000}\ssrc="([^"]{0,2000})"/.exec(atFirst(block, 'class="fighter-one"', 10000))
     var champ = out.length === 0 && segment === "main" && photo !== null && /[-_]CHAMP[-_.]/i.test(photo[1])
     var method = aresMethod(values.method || "")
     var done = method !== ""
@@ -1228,11 +1291,11 @@ function parseAres(text, now, days) {
   str(data.upcoming).split(/class="competition-resume upcoming"/).slice(1, 20).forEach(function(block) {
     var name = aresName((/title="([^"]*)"/.exec(block) || [])[1])
     var comp = /\?competition=(\d{1,9})/.exec(block)
-    var when = aresDate((/class="date">[\s\S]*?<br\s*\/?>\s*(\d{2}\/\d{2}\/\d{4})/.exec(block) || [])[1])
+    var when = aresDate((/^class="date">[\s\S]{0,500}?<br\s*\/?>\s*(\d{2}\/\d{2}\/\d{4})/.exec(atFirst(block, 'class="date">', 600)) || [])[1])
     if (name === "" || !comp || !when) return
     var page = str(cards[comp[1]])
     // The card page repeats the date, with the start time.
-    var timed = aresDate((/class="date">[\s\S]*?<br\s*\/?>\s*(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}(?::\d{2})?)/.exec(page) || [])[1])
+    var timed = aresDate((/^class="date">[\s\S]{0,500}?<br\s*\/?>\s*(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}(?::\d{2})?)/.exec(atFirst(page, 'class="date">', 600)) || [])[1])
     if (timed && timed.day === when.day) when = timed
     add(name, when, aresFights(page), false, safeUrl("https://www.aresfighting.com/events/?competition=" + comp[1]))
   })
@@ -1266,8 +1329,9 @@ function sherdogMethod(text) {
 
 // One fight from the markup of its two fighters: { names, records, results }.
 function sherdogFight(block, segmentIndex, number) {
+  block = str(block).slice(0, blockMax)
   var names = []
-  var nameRe = /itemprop="name">([\s\S]*?)<\/span>/g
+  var nameRe = /itemprop="name">([\s\S]{0,500}?)<\/span>/g
   var n
   while ((n = nameRe.exec(block)) !== null && names.length < 2) names.push(htmlText(n[1]))
   if (names.length < 2) return null
@@ -1277,11 +1341,11 @@ function sherdogFight(block, segmentIndex, number) {
   var results = []
   var resRe = /class="final_result ([a-z_]+)"/g
   while ((n = resRe.exec(block)) !== null && results.length < 2) results.push(n[1])
-  var weight = /class="weight_class">([\s\S]*?)<\/span>/.exec(block)
+  var weight = /class="weight_class">([\s\S]{0,500}?)<\/span>/.exec(block)
   var done = results.length === 2 && results.every(function(r) { return r !== "yet_to_come" })
-  var winby = /class="winby"><b>([\s\S]*?)<\/b>/.exec(block) || /<em>Method<\/em>\s*<br\s*\/?>([\s\S]*?)<\/td>/.exec(block)
-  var round = /class="winby"[\s\S]*?<\/td>\s*<td>\s*([0-9]+)\s*<\/td>\s*<td>\s*([0-9:]+)\s*<\/td>/.exec(block)
-    || /<em>Round<\/em>\s*<br\s*\/?>\s*([0-9]+)[\s\S]*?<em>Time<\/em>\s*<br\s*\/?>\s*([0-9:]+)/.exec(block)
+  var winby = /class="winby"><b>([\s\S]{0,500}?)<\/b>/.exec(block) || /<em>Method<\/em>\s*<br\s*\/?>([\s\S]{0,500}?)<\/td>/.exec(block)
+  var round = /class="winby"[\s\S]{0,2000}?<\/td>\s*<td>\s*([0-9]+)\s*<\/td>\s*<td>\s*([0-9:]+)\s*<\/td>/.exec(block)
+    || /<em>Round<\/em>\s*<br\s*\/?>\s*([0-9]+)[\s\S]{0,2000}?<em>Time<\/em>\s*<br\s*\/?>\s*([0-9:]+)/.exec(block)
   var method = done ? (winby ? sherdogMethod(winby[1]) : "") : ""
   if (done && method === "" && results[0] === "draw") method = "Draw"
   return { names: names, records: records, results: results, done: done, method: method,
@@ -1343,7 +1407,7 @@ function parseSherdog(text, orgId, now, days) {
   Object.keys(data.events).slice(0, 20).forEach(function(path) {
     if (!/^\/events\/[A-Za-z0-9_-]+$/.test(path)) return
     var page = str(data.events[path])
-    var title = htmlText((/<h1[^>]*>([\s\S]*?)<\/h1>/.exec(page) || [])[1])
+    var title = htmlText((/^<h1[^>]{0,500}>([\s\S]{0,2000}?)<\/h1>/.exec(atFirst(page, "<h1", 3000)) || [])[1])
     var day = /class="info">\s*<span><meta itemprop="startDate" content="(\d{4})-(\d{2})-(\d{2})/.exec(page)
     if (title === "" || !day) return
     var when = new Date(Date.UTC(Number(day[1]), Number(day[2]) - 1, Number(day[3]), 12))
@@ -1353,7 +1417,7 @@ function parseSherdog(text, orgId, now, days) {
     var id = String(promo.idBase + (number ? Number(number[1]) : 100000 + (sherdogId ? Number(sherdogId[1]) % 100000 : 0)))
     if (seen[id]) return
     seen[id] = true
-    var place = htmlText((/<span itemprop="location">([\s\S]*?)<\/span>/.exec(page) || [])[1])
+    var place = htmlText((/^<span itemprop="location">([\s\S]{0,1000}?)<\/span>/.exec(atFirst(page, '<span itemprop="location">', 1200)) || [])[1])
     var comma = place.indexOf(",")
     var venue = comma > 0 ? place.slice(0, comma).trim() + " · " + place.slice(comma + 1).trim() : place
     var country = place.slice(place.lastIndexOf(",") + 1).trim()
@@ -1427,6 +1491,8 @@ function serializeCardCache(segments, records) {
 
 // { segments: { id: { at, data } }, records: { name: { at, value } } }, fresh
 // entries only, each rebuilt field by field: the file is not to be trusted.
+// A "blocked" record is kept too: it is what stops the vendor that refused
+// from being asked again for 12 hours, across restarts.
 function parseCardCache(text, now) {
   var out = { segments: ({}), records: ({}) }
   var data = parseJson(text)
@@ -1455,7 +1521,7 @@ function parseCardCache(text, now) {
     var e = recs[name]
     if (!isObject(e) || !cardCacheFresh(e.at, now)) return
     var v = str(e.value)
-    if (recordShape.test(v) || v === "n/a") out.records[name] = { at: Number(e.at), value: v }
+    if (recordShape.test(v) || v === "n/a" || v === "blocked") out.records[name] = { at: Number(e.at), value: v }
   })
   out.records = newestEntries(out.records, cacheRecordMax, function(k, v) { return v.at })
   return out

@@ -57,7 +57,10 @@ SHERDOG_BASE=${MMA_SHERDOG_BASE:-https://www.sherdog.com}
 ARES_BASE=${MMA_ARES_BASE:-https://www.aresfighting.com}
 # Wikimedia asks API clients to say who they are.
 WIKI_UA="omarchy-mma (https://github.com/anavarre/omarchy-mma)"
+# Concurrent requests to ESPN's API, and to the HTML sites (ARES, Sherdog),
+# which are ordinary web servers and get a gentler pace.
 PARALLEL=16
+SITE_PARALLEL=4
 # A card has at most about 15 fights; never make more requests than this for
 # one event, whatever the scoreboard listed.
 MAX_FIGHTS=40
@@ -66,16 +69,39 @@ MAX_ARES_UPCOMING=8
 MAX_ARES_PAST=6
 MAX_SHERDOG_UPCOMING=8
 MAX_SHERDOG_PAST=6
-# ESPN's largest answer is well under 1 MB; refuse anything far beyond that.
-MAX_BYTES=8388608
+# Size caps per answer, each well over ten times the largest seen (ESPN's
+# scoreboard ~100 KB, a competition ~20 KB, a year page's wikitext ~350 KB, an
+# event page ~110 KB), and the cap on what one command prints in all: the
+# output is parsed on the shell's GUI thread, so it is kept small whatever the
+# servers send.
+MAX_BYTES_ESPN=4194304
+MAX_BYTES_CORE=1048576
+MAX_BYTES_WIKI=4194304
+MAX_BYTES_HTML=2097152
+TOTAL_MAX=8388608
 
+# fetch <url> [user-agent] [max-bytes]
 # --max-filesize only works when the server announces a length, so the body is
 # also cut at the limit: head stops reading, curl fails on the closed pipe and
 # pipefail makes that the function's status. The truncated output is then
 # ignored: Service.qml reads stdout only on exit 0, and `card` deletes the file.
+# Redirects are followed, but only to https and only a few.
 fetch() {
-  curl -fsS --proto '=https' --max-filesize "$MAX_BYTES" --max-time 20 --retry 1 \
-    -A "${2:-omarchy-mma}" "$1" | head -c "$MAX_BYTES"
+  local max=${3:-$MAX_BYTES_HTML}
+  curl -fsS --proto '=https' -L --max-redirs 3 --proto-redir '=https' \
+    --max-filesize "$max" --max-time 20 --retry 1 \
+    -A "${2:-omarchy-mma}" "$1" | head -c "$max"
+}
+
+# Whether the file named still fits the command's output budget; when it does,
+# it is charged. Runs in the current shell (never in a pipeline or $(...)), so
+# the budget actually goes down.
+budget=$TOTAL_MAX
+fits() {
+  local size
+  size=$(stat -c %s "$1" 2> /dev/null) || return 1
+  [ "$size" -le "$budget" ] || return 1
+  budget=$((budget - size))
 }
 
 urlencode() {
@@ -125,7 +151,7 @@ record_of() {
   if [ -z "$path" ] || [ "$(printf '%s\n' "$path" | wc -l)" -ne 1 ] || ! [[ $path =~ ^/fighter/[A-Za-z0-9._-]+$ ]]; then
     printf 'n/a'; return
   fi
-  page=$(fetch "$SHERDOG_BASE$path" "$WIKI_UA" | tr -d '\n') || { printf 'blocked'; return; }
+  page=$(fetch "$SHERDOG_BASE$path" "$WIKI_UA" "$MAX_BYTES_HTML" | tr -d '\n') || { printf 'blocked'; return; }
   count() {
     printf '%s' "$page" | grep -o "class=\"winloses $1\">[[:space:]]*<span>[^<]*</span>[[:space:]]*<span>[0-9]*" \
       | grep -o '[0-9]\+$' | head -1
@@ -149,7 +175,7 @@ case "$cmd" in
     [ $# -eq 2 ] || die "usage: events <league> <dates>"
     [[ $1 =~ ^[a-z0-9-]+$ ]] || die "bad league"
     [[ $2 =~ ^[0-9]{8}-[0-9]{8}$ ]] || die "bad dates"
-    fetch "$SITE_BASE/$1/scoreboard?dates=$2&limit=100"
+    fetch "$SITE_BASE/$1/scoreboard?dates=$2&limit=100" omarchy-mma "$MAX_BYTES_ESPN"
     ;;
   card)
     [ $# -ge 3 ] || die "usage: card <league> <eventId> <competitionId>..."
@@ -166,12 +192,16 @@ case "$cmd" in
       [ "$n" -lt "$MAX_FIGHTS" ] || break
       n=$((n + 1))
       # A failed or oversized fetch leaves no file, so it is skipped below.
-      { fetch "$CORE_BASE/$league/events/$event/competitions/$id?lang=en" > "$tmp/$n.json" 2> /dev/null \
-          || rm -f "$tmp/$n.json"; } &
-      if [ "$id" != "$arg" ]; then
-        { fetch "$CORE_BASE/$league/events/$event/competitions/$id/status?lang=en" > "$tmp/$n.s.json" 2> /dev/null \
-            || rm -f "$tmp/$n.s.json"; } &
-      fi
+      # The status request of a finished fight runs in the same job, after
+      # the competition, so a batch never holds more than PARALLEL requests.
+      {
+        fetch "$CORE_BASE/$league/events/$event/competitions/$id?lang=en" omarchy-mma "$MAX_BYTES_CORE" > "$tmp/$n.json" 2> /dev/null \
+          || rm -f "$tmp/$n.json"
+        if [ "$id" != "$arg" ]; then
+          fetch "$CORE_BASE/$league/events/$event/competitions/$id/status?lang=en" omarchy-mma "$MAX_BYTES_CORE" > "$tmp/$n.s.json" 2> /dev/null \
+            || rm -f "$tmp/$n.s.json"
+        fi
+      } &
       # Throttle: wait for the batch to finish before starting the next.
       if [ $((n % PARALLEL)) -eq 0 ]; then wait; fi
     done
@@ -180,7 +210,7 @@ case "$cmd" in
     sep=""
     for ((i = 1; i <= n; i++)); do
       for f in "$tmp/$i.json" "$tmp/$i.s.json"; do
-        [ -s "$f" ] || continue
+        [ -s "$f" ] && fits "$f" || continue
         printf '%s' "$sep"
         cat "$f"
         sep=","
@@ -204,8 +234,11 @@ case "$cmd" in
     sep=""
     ok=0
     for y in "$@"; do
-      out=$(fetch "$WIKI_API?action=parse&page=${y}_in_${wiki_page}&prop=wikitext&redirects=1&format=json&formatversion=2" "$WIKI_UA" 2> /dev/null) || continue
+      out=$(fetch "$WIKI_API?action=parse&page=${y}_in_${wiki_page}&prop=wikitext&redirects=1&format=json&formatversion=2" "$WIKI_UA" "$MAX_BYTES_WIKI" 2> /dev/null) || continue
       [ -n "$out" ] || continue
+      # Past the output budget, the remaining years are left out.
+      [ "${#out}" -le "$budget" ] || continue
+      budget=$((budget - ${#out}))
       printf '%s%s' "$sep" "$out"
       sep=","
       ok=1
@@ -238,7 +271,7 @@ case "$cmd" in
     for id in $ids; do
       n=$((n + 1))
       { fetch "$ARES_BASE/events/?competition=$id" > "$tmp/card.$id" 2> /dev/null || rm -f "$tmp/card.$id"; } &
-      if [ $((n % PARALLEL)) -eq 0 ]; then wait; fi
+      if [ $((n % SITE_PARALLEL)) -eq 0 ]; then wait; fi
     done
     wait
     n=0
@@ -246,15 +279,19 @@ case "$cmd" in
       n=$((n + 1))
       key=${path//\//_}
       { fetch "$ARES_BASE$path" > "$tmp/result.$key" 2> /dev/null || rm -f "$tmp/result.$key"; } &
-      if [ $((n % PARALLEL)) -eq 0 ]; then wait; fi
+      if [ $((n % SITE_PARALLEL)) -eq 0 ]; then wait; fi
     done
     wait
+    # The two listings always fit (two pages, each under the per-page cap);
+    # event pages are included while the output budget lasts.
+    fits "$tmp/upcoming" || : > "$tmp/upcoming"
+    fits "$tmp/past" || : > "$tmp/past"
     printf '{"upcoming":'; jstr < "$tmp/upcoming"
     printf ',"past":'; jstr < "$tmp/past"
     printf ',"cards":{'
     sep=""
     for id in $ids; do
-      [ -s "$tmp/card.$id" ] || continue
+      [ -s "$tmp/card.$id" ] && fits "$tmp/card.$id" || continue
       printf '%s"%s":' "$sep" "$id"; jstr < "$tmp/card.$id"
       sep=","
     done
@@ -262,7 +299,7 @@ case "$cmd" in
     sep=""
     for path in $paths; do
       key=${path//\//_}
-      [ -s "$tmp/result.$key" ] || continue
+      [ -s "$tmp/result.$key" ] && fits "$tmp/result.$key" || continue
       printf '%s"%s":' "$sep" "$path"; jstr < "$tmp/result.$key"
       sep=","
     done
@@ -294,15 +331,16 @@ case "$cmd" in
       n=$((n + 1))
       key=${path//\//_}
       { fetch "$SHERDOG_BASE$path" "$WIKI_UA" > "$tmp/event.$key" 2> /dev/null || rm -f "$tmp/event.$key"; } &
-      if [ $((n % PARALLEL)) -eq 0 ]; then wait; fi
+      if [ $((n % SITE_PARALLEL)) -eq 0 ]; then wait; fi
     done
     wait
+    fits "$tmp/org" || : > "$tmp/org"
     printf '{"org":'; jstr < "$tmp/org"
     printf ',"events":{'
     sep=""
     for path in $paths; do
       key=${path//\//_}
-      [ -s "$tmp/event.$key" ] || continue
+      [ -s "$tmp/event.$key" ] && fits "$tmp/event.$key" || continue
       printf '%s"%s":' "$sep" "$path"; jstr < "$tmp/event.$key"
       sep=","
     done
@@ -318,7 +356,7 @@ case "$cmd" in
       n=$((n + 1))
       printf '%s' "$name" > "$tmp/$n.name"
       { record_of "$name" > "$tmp/$n.rec" 2> /dev/null; } &
-      if [ $((n % PARALLEL)) -eq 0 ]; then wait; fi
+      if [ $((n % SITE_PARALLEL)) -eq 0 ]; then wait; fi
     done
     wait
     printf '{'

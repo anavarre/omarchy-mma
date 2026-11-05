@@ -56,8 +56,21 @@ Item {
   property var segmentCache: ({})
   property var blockedAt: ({})
   property var recordTimes: ({})
+  // The selection the current event list was fetched for. The widget hands
+  // the organizations over as a fresh array on every settings change, and a
+  // var property signals every assignment, so without this a change of text
+  // size or time zone would fetch everything again.
+  property string selectionKey: ""
+  // When the user last asked for a refresh (r or middle-click).
+  property double manualRefreshAt: 0
 
-  onOrganizationsChanged: if (root.organizations !== null) refreshSoon()
+  onOrganizationsChanged: {
+    if (root.organizations === null) return
+    var key = JSON.stringify(Model.selectedOrganizations(root.organizations))
+    if (key === root.selectionKey) return
+    root.selectionKey = key
+    refreshSoon()
+  }
   onLookaheadDaysChanged: refreshSoon()
   onKeepFinishedDaysChanged: refreshSoon()
   onEventLimitChanged: root.merge()
@@ -237,12 +250,32 @@ Item {
   // them: lineups change, but not by the hour.
   function forgetCards() { root.recordQueue = []; root.cards = ({}) }
 
-  // The r key: forget everything kept, on disk too, and fetch it all again.
+  // A refresh the user asked for. At most one per manualRefreshMinMs: a held
+  // key repeats dozens of times a second, and each refresh is a round of
+  // requests to every source. Returns whether it ran.
+  function userRefresh() {
+    var now = Date.now()
+    if (now - root.manualRefreshAt < Model.manualRefreshMinMs) return false
+    root.manualRefreshAt = now
+    return true
+  }
+
+  // Middle-click: fetch the event list again, keeping every card cached.
+  function softRefresh() {
+    if (root.userRefresh()) root.refresh()
+  }
+
+  // The r key: forget the cards and records kept, on disk too, and fetch it
+  // all again. What stays is the list of fighters Sherdog refused to answer
+  // for: a vendor that is blocking us is not asked again for 12 hours,
+  // however often the key is pressed.
   function hardRefresh() {
+    if (!root.userRefresh()) return
     root.segmentCache = ({})
     root.recordTimes = ({})
-    root.blockedAt = ({})
-    root.records = ({})
+    var blocked = {}
+    for (var n in root.records) if (root.records[n] === "blocked" && root.blockedAt[n] !== undefined) blocked[n] = "blocked"
+    root.records = blocked
     root.recordQueue = []
     root.forgetCards()
     root.refresh()
@@ -285,6 +318,9 @@ Item {
       var error = ""
       if (exitCode === 0) {
         try {
+          // The parsers run on the GUI thread: a response beyond the budget
+          // is refused outright rather than read.
+          if (eventsOut.text.length > Model.maxResponseChars) throw new Error("response too large")
           var org = eventsProcess.org
           var provider = Model.providerOf(org)
           var days = Model.snapLookaheadDays(root.lookaheadDays)
@@ -309,17 +345,6 @@ Item {
         f.push(eventsProcess.org)
         root.failures = f
         root.lastError = error
-  // The r key: forget everything kept, on disk too, and fetch it all again.
-  function hardRefresh() {
-    root.segmentCache = ({})
-    root.recordTimes = ({})
-    root.records = ({})
-    root.recordQueue = []
-    root.forgetCards()
-    root.refresh()
-    root.saveCache()
-  }
-
       }
       Qt.callLater(root.fetchNext)
     }
@@ -339,7 +364,7 @@ Item {
       if (job) {
         var sections = [], ok = false, segments = ({})
         try {
-          segments = exitCode === 0 ? Model.parseSegments(cardOut.text) : ({})
+          segments = exitCode === 0 && cardOut.text.length <= Model.maxResponseChars ? Model.parseSegments(cardOut.text) : ({})
           ok = Object.keys(segments).length > 0
           sections = Model.buildCard(job.event, segments)
         } catch (e) {
@@ -372,7 +397,7 @@ Item {
         try {
           // A failed run (exit 1: everything blocked) still settles the card:
           // whoever has no record by now is shown as blocked or N/A.
-          var found = Model.parseRecords(recordsOut.text)
+          var found = recordsOut.text.length <= Model.maxResponseChars ? Model.parseRecords(recordsOut.text) : ({})
           // A name the script never answered for counts as blocked.
           job.names.forEach(function(n) { if (!found[n]) found[n] = "blocked" })
           var all = {}
@@ -411,9 +436,13 @@ Item {
     command: ["/usr/bin/mkdir", "-p", root.cacheDir]
     onExited: {
       cacheFile.setText(Model.serializeCache(root.events, root.fetchedAt))
+      // Real records and N/As with the time they were fetched; blocked names
+      // with the time of the refusal, so the backoff survives a restart.
       var recs = {}
       for (var n in root.recordTimes)
         if (root.records[n] !== undefined && root.records[n] !== "blocked") recs[n] = { at: root.recordTimes[n], value: root.records[n] }
+      for (var b in root.blockedAt)
+        if (root.records[b] === "blocked") recs[b] = { at: root.blockedAt[b], value: "blocked" }
       cardsFile.setText(Model.serializeCardCache(
         Model.newestEntries(root.segmentCache, Model.cacheSegmentMax, function(k, v) { return v.at }),
         Model.newestEntries(recs, Model.cacheRecordMax, function(k, v) { return v.at })))
@@ -426,20 +455,23 @@ Item {
     printErrors: false
     onLoaded: {
       var kept = Model.parseCardCache(text(), Date.now())
-      var segs = {}, all = {}, times = {}
+      var segs = {}, all = {}, times = {}, blocked = {}
       var k
       for (k in kept.segments) segs[k] = kept.segments[k]
       for (k in root.segmentCache) segs[k] = root.segmentCache[k]
       for (k in root.records) all[k] = root.records[k]
       for (k in root.recordTimes) times[k] = root.recordTimes[k]
+      for (k in root.blockedAt) blocked[k] = root.blockedAt[k]
       for (k in kept.records) {
         if (all[k] !== undefined) continue
         all[k] = kept.records[k].value
-        times[k] = kept.records[k].at
+        if (all[k] === "blocked") blocked[k] = kept.records[k].at
+        else times[k] = kept.records[k].at
       }
       root.segmentCache = segs
       root.records = all
       root.recordTimes = times
+      root.blockedAt = blocked
     }
   }
 

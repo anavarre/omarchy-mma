@@ -101,7 +101,7 @@ BarWidget {
       + "\nClick: open · Middle-click: refresh"
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.LeftButton) root.toggle()
-      else if (buttonCode === Qt.MiddleButton && root.service) root.service.refresh()
+      else if (buttonCode === Qt.MiddleButton && root.service) root.service.softRefresh()
     }
   }
 }

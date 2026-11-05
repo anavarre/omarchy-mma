@@ -334,9 +334,13 @@ test("cache round-trips and rejects other versions", () => {
   assert.strictEqual(M.parseCache("junk"), null);
 });
 
-test("safeUrl accepts https only", () => {
+test("safeUrl accepts https only, on the sources' own hosts", () => {
   assert.strictEqual(M.safeUrl("https://www.espn.com/mma/x?a=1&b=2"), "https://www.espn.com/mma/x?a=1&b=2");
-  for (const bad of ["http://espn.com", "javascript:alert(1)", "file:///etc/passwd", "https://a b", "https://a\"b", "", null, undefined, 42])
+  for (const ok of ["https://espn.com", "https://en.wikipedia.org/wiki/X#Y", "https://www.aresfighting.com/events/?competition=1", "https://www.sherdog.com/events/E-1", "https://WWW.ESPN.com/x"])
+    assert.strictEqual(M.safeUrl(ok), ok);
+  for (const bad of ["http://espn.com", "javascript:alert(1)", "file:///etc/passwd", "https://a b", "https://a\"b", "", null, undefined, 42,
+    // Any other host, including look-alikes: the link field is remote-controlled.
+    "https://evil.example/espn.com", "https://espn.com.evil.example/", "https://notespn.com/", "https://www.espn.com@evil.example/", "https://www.espn.com:443/x"])
     assert.strictEqual(M.safeUrl(bad), "");
 });
 
@@ -416,7 +420,7 @@ test("parseScoreboard survives fields of the wrong type", () => {
     { events: [{ id: 1, competitions: [{ id: 2, broadcasts: [{ names: "abc" }, "x"] }] }] },
     { events: [{ id: 1, competitions: [{ id: 2, broadcasts: "abc", venue: "x", format: { regulation: "x" }, type: 5, status: { type: null } }] }] },
     { events: [{ id: 1, links: "x", venues: "x", status: { type: null } }] },
-    { events: [{ id: 1, links: [null, { rel: 5, href: "https://a.b/c" }, { rel: "event", href: "https://a.b/c" }] }] },
+    { events: [{ id: 1, links: [null, { rel: 5, href: "https://www.espn.com/c" }, { rel: "event", href: "https://www.espn.com/c" }] }] },
   ];
   for (const s of shapes) {
     const events = M.parseScoreboard(s, "ufc");
@@ -427,7 +431,8 @@ test("parseScoreboard survives fields of the wrong type", () => {
     }
   }
   // A string rel is not a list, so it is not the event link.
-  assert.strictEqual(M.parseScoreboard({ events: [{ id: 1, links: [{ rel: ["event"], href: "https://a.b/c" }] }] }, "ufc")[0].url, "https://a.b/c");
+  assert.strictEqual(M.parseScoreboard({ events: [{ id: 1, links: [{ rel: ["event"], href: "https://www.espn.com/c" }] }] }, "ufc")[0].url, "https://www.espn.com/c");
+  assert.strictEqual(M.parseScoreboard({ events: [{ id: 1, links: [{ rel: ["event"], href: "https://a.b/c" }] }] }, "ufc")[0].url, "");
 });
 
 test("parseSegments and buildCard survive fields of the wrong type", () => {
@@ -1048,7 +1053,9 @@ test("card cache keeps fresh, well-formed entries only", () => {
   const back = M.parseCardCache(text, now);
   assert.deepStrictEqual(Object.keys(back.segments), ["123"]);
   assert.strictEqual(back.segments["123"].data["401"].champion, true);
-  assert.deepStrictEqual(Object.keys(back.records).sort(), ["Nik Bagley", "Nobody"]);
+  // A blocked name is kept: it is what holds the 12-hour backoff across restarts.
+  assert.deepStrictEqual(Object.keys(back.records).sort(), ["Blocked", "Nik Bagley", "Nobody"]);
+  assert.strictEqual(back.records["Blocked"].value, "blocked");
   assert.deepStrictEqual(M.parseCardCache("junk", now), { segments: {}, records: {} });
   assert.strictEqual(M.cardCacheFresh(now + 1000, now), false);
 });
@@ -1237,3 +1244,110 @@ test("filterByOrg and eventOrganizations narrow events to one organization", () 
   assert.equal(M.filterByOrg(list, "").length, 3)
   assert.deepEqual(M.eventOrganizations(list).map((o) => o.id), ["ufc", "pfl"])
 })
+
+// ------------------------------------------------------------ hostile input
+//
+// The parsers run on the shell's GUI thread, on text anyone can edit (Wikipedia)
+// or any server can send. Each case below opens a construct over and over and
+// never closes it; with unbounded lazy matches each opener scanned to the end of
+// the input, which took from 6 seconds to well over a minute at these sizes.
+// Bounded, each must finish in well under a second; the budget is generous for
+// slow machines.
+
+// The size is the per-page cap bin/mma-api applies to HTML and (near enough)
+// to a year's wikitext; the parsers are linear, so this is their worst case.
+const hostileKb = 2048;
+const hostileBudgetMs = 1500;
+function timed(label, fn) {
+  const t = Date.now();
+  const r = fn();
+  const ms = Date.now() - t;
+  assert.ok(ms < hostileBudgetMs, label + " took " + ms + " ms");
+  return r;
+}
+
+test("a Wikipedia page with an infobox that never closes parses in bounded time", () => {
+  const sec = "== Cage Warriors 999 ==\n" + "{{Infobox MMA event |x".repeat(Math.floor(hostileKb * 1024 / 22));
+  const page = JSON.stringify([{ parse: { title: "2026 in Cage Warriors", wikitext: sec } }]);
+  assert.strictEqual(timed("infobox", () => M.parseWikipedia(page, "cw", NOW, 365)).length, 0);
+});
+
+test("wikitext with refs, comments, tags and links that never close is stripped in bounded time", () => {
+  const n = Math.floor(hostileKb * 1024 / 8);
+  for (const s of ["<ref>a".repeat(n), "<!-- a".repeat(n), "<a".repeat(n), "[[a".repeat(n), "{{flag a".repeat(n)])
+    assert.strictEqual(typeof timed("wikiPlain", () => M.wikiPlain(s)), "string");
+  // A bout template that never closes, and a card label that runs on.
+  const bouts = "== X ==\n{{Infobox MMA event\n| date = {{start date|2026|11|7}}\n}}\n" + "{{MMAevent bout\n|a".repeat(n);
+  assert.ok(timed("wikiBouts", () => M.wikiBouts(bouts)).length <= M.maxFightsPerEvent);
+  assert.strictEqual(timed("wikiSegment", () => M.wikiSegment("prelim".repeat(n))), "prelims1");
+});
+
+test("a ONE results table cell attribute cannot be split in exponentially many ways", () => {
+  // "a=a=a=..." with no closing pipe used to backtrack 2^n ways.
+  const cell = "|" + "a=".repeat(40) + "Lightweight MMA";
+  const section = "== ONE 1 ==\n=== Results ===\n{|\n|-\n" + [cell, "|A", "|def.", "|B", "|KO", "|1", "|1:00", "|x"].join("\n") + "\n|}";
+  assert.strictEqual(timed("table cell", () => M.wikiTableBouts(section)).length, 1);
+});
+
+test("an ARES fight block whose records never reach stat-right parses in bounded time", () => {
+  const block = 'class="fighter-line"<h4>A</h4><h4>B</h4>' + 'class="records"stat-left">1<'.repeat(Math.floor(hostileKb * 1024 / 28));
+  const data = JSON.stringify({ upcoming: 'class="competition-resume upcoming" title="ARES 99" ?competition=5 class="date"><br/>20/12/2026', past: "", cards: { "5": block }, results: {} });
+  assert.strictEqual(timed("ares", () => M.parseAres(data, NOW, 365)).length, 1);
+  const tags = "<h2".repeat(Math.floor(hostileKb * 1024 / 3));
+  assert.strictEqual(timed("ares h2", () => M.aresFights(tags)).length, 0);
+});
+
+test("a Sherdog page of unclosed headings parses in bounded time", () => {
+  const page = "<h1>".repeat(Math.floor(hostileKb * 1024 / 4));
+  const data = JSON.stringify({ org: "", events: { "/events/HXMMA-1-1": page } });
+  assert.strictEqual(timed("sherdog", () => M.parseSherdog(data, "hxmma", NOW, 365)).length, 0);
+  const html = "<a".repeat(Math.floor(hostileKb * 1024 / 2));
+  assert.strictEqual(typeof timed("htmlText", () => M.htmlText(html)), "string");
+});
+
+test("the regexes stay bounded: no unbounded lazy scan is left in Model.js", () => {
+  const src = fs.readFileSync(__dirname + "/../Model.js", "utf8");
+  assert.deepStrictEqual(src.match(/\[\\s\\S\]\*\?/g), null, "an unbounded [\\s\\S]*? is back");
+  assert.deepStrictEqual(src.match(/<\[\^>\]\*>/g), null, "an unbounded <[^>]*> is back");
+});
+
+// ------------------------------------------------------- polling discipline
+
+test("the service fetches again only when the selection really changed", () => {
+  const src = fs.readFileSync(__dirname + "/../Service.qml", "utf8");
+  const handler = src.slice(src.indexOf("onOrganizationsChanged"), src.indexOf("onLookaheadDaysChanged"));
+  assert.ok(/selectionKey/.test(handler), "organizations are compared before a refresh");
+  assert.ok(/JSON\.stringify\(Model\.selectedOrganizations/.test(handler));
+});
+
+test("a manual refresh is throttled and keeps the vendor's refusals", () => {
+  const src = fs.readFileSync(__dirname + "/../Service.qml", "utf8");
+  assert.strictEqual((src.match(/function hardRefresh\(/g) || []).length, 1, "one hardRefresh, not a stray copy");
+  const hard = src.slice(src.indexOf("function hardRefresh"), src.indexOf("function saveCache"));
+  assert.ok(/userRefresh\(\)/.test(hard));
+  assert.ok(!/blockedAt = \(\{\}\)/.test(hard), "hard refresh must not forget who blocked us");
+  assert.ok(/manualRefreshMinMs/.test(src));
+  assert.ok(M.manualRefreshMinMs >= 10 * 1000);
+  const widget = fs.readFileSync(__dirname + "/../BarWidget.qml", "utf8");
+  assert.ok(/MiddleButton[^\n]*softRefresh\(\)/.test(widget), "middle-click goes through the throttle");
+  // A refusal is not retried for as long as the card cache lives.
+  assert.ok(M.blockedRetryMs >= M.cardCacheMs);
+});
+
+test("every process output is size-checked before it is parsed", () => {
+  const src = fs.readFileSync(__dirname + "/../Service.qml", "utf8");
+  assert.strictEqual((src.match(/Model\.maxResponseChars/g) || []).length, 3, "events, card and records");
+  assert.ok(M.maxResponseChars <= 32 * 1024 * 1024);
+});
+
+test("bin/mma-api caps, paces and pins its requests", () => {
+  const api = fs.readFileSync(__dirname + "/../bin/mma-api", "utf8");
+  assert.ok(/--proto-redir '=https'/.test(api) && /--max-redirs \d/.test(api), "redirects stay on https");
+  assert.ok(/^SITE_PARALLEL=[1-4]$/m.test(api), "the HTML sites get a gentle pace");
+  assert.ok(/^TOTAL_MAX=\d+$/m.test(api) && /fits\(\)/.test(api), "a per-command output budget");
+  // Every fetch in a background job of an HTML site is paced by SITE_PARALLEL,
+  // and the card's status request is no longer a second concurrent job.
+  assert.strictEqual((api.match(/n % PARALLEL/g) || []).length, 1, "ESPN cards only");
+  assert.strictEqual((api.match(/n % SITE_PARALLEL/g) || []).length, 4, "ARES cards, ARES results, Sherdog events, records");
+  assert.ok(!/status\?lang=en" > "\$tmp\/\$n\.s\.json" 2> \/dev\/null \\\n\s*\|\| rm -f "\$tmp\/\$n\.s\.json"; \} &/.test(api));
+});

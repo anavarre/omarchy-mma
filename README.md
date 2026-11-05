@@ -47,7 +47,7 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
 
 ## Using it
 
-- Click the glove: the event list, each event with its promotion's logo. Middle-click: refresh.
+- Click the glove: the event list, each event with its promotion's logo. Middle-click: refresh (at most once every 30 seconds).
 - `s` opens the settings view: tick the organizations to follow (UFC on, the others off by default).
   `↑`/`↓` move through every setting (organizations, time zone, keep days, text size);
   Space or Enter toggles an organization, `←`/`→` change the other settings, `Esc` goes back. The choice is saved to `shell.json`.
@@ -91,10 +91,12 @@ No key or account is needed.
   opening one makes no second request for the card itself.
 - Wikipedia has no fight records, so opening a card also looks each fighter up
   on [Sherdog](https://www.sherdog.com) (one search and one page per fighter,
-  run in parallel, kept until the app restarts). The record appears under the
+  four fighters at a time, kept for 12 hours). The record appears under the
   name a moment after the card opens. A fighter is shown a record only when
   Sherdog has exactly one fighter by that name, so namesakes and fighters it
-  does not list show none rather than a wrong one.
+  does not list show none rather than a wrong one. When Sherdog refuses to
+  answer (it runs a bot challenge), that fighter is not asked about again for
+  12 hours, and `r` does not reset that: a site that is blocking us is left alone.
 - Wikipedia has dates but no start times, so these events show the day only.
 - Cards are as complete as the page: a late change may take a while to appear.
 - The event link opens its section on Wikipedia. Wikipedia text is CC BY-SA.
@@ -130,13 +132,36 @@ Sherdog gives a day, not a start time. The event link opens the event on sherdog
 Only UFC, PFL, Cage Warriors, KSW, ARES, Oktagon, Hexagone MMA, ACA and ONE are available at the moment. Another promotion
 needs a provider of its own; suggestions are welcome, please open an issue.
 
-Card details (segments, and Cage Warriors and KSW fighter records, which are looked up
-as soon as the event list shows) are cached for 12 hours in
-`~/.cache/omarchy-mma/cards.json`. `r` is a hard refresh that bypasses and
-clears that cache; the background refresh and middle-click use it.
+Card details (segments, and the fighter records of Wikipedia-sourced promotions,
+which are looked up when a card is opened or is the next event) are cached for
+12 hours in `~/.cache/omarchy-mma/cards.json`. `r` is a hard refresh that
+bypasses and clears that cache (except the list of fighters Sherdog refused);
+the background refresh and middle-click use it. `r` and middle-click run at
+most once every 30 seconds, so a held key is not a burst of requests.
 
 Events are cached in `~/.cache/omarchy-mma/events.json` and shown when the source
 can't be reached.
+
+### Request limits
+
+The plugin is a guest on every one of these servers, so what it asks for and
+what it accepts back are both bounded:
+
+- The event list is fetched on the refresh interval (an hour at the least),
+  when the panel opens with a list more than ten minutes old, when the set of
+  organizations changes, and on `r` or middle-click, at most every 30 seconds.
+  Changing any other setting fetches nothing.
+- Requests to ESPN run up to 16 at a time; to the HTML sites (ARES, Sherdog)
+  four at a time. Each is tried once more on a transient error, with curl's
+  backoff and `Retry-After` honoured. A failed refresh waits for the next
+  interval rather than retrying.
+- Every answer is cut at a size cap (1 to 4 MB, more than ten times the
+  largest seen), one command prints at most 8 MB in all, redirects are
+  followed only to https, and the service refuses to parse anything larger
+  still. Every open-ended match in the parsers is bounded, so a page built to
+  stall them (Wikipedia's are editable by anyone) costs milliseconds, not minutes.
+- An event link opens in the browser only when it is an https URL on one of
+  the sources' own hosts.
 
 ## Tests
 
