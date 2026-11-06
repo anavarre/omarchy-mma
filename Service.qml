@@ -56,6 +56,8 @@ Item {
   property var segmentCache: ({})
   property var blockedAt: ({})
   property var recordTimes: ({})
+  // When a real record stops being good: after the fighter's next fight.
+  property var recordUntil: ({})
   // The selection the current event list was fetched for. The widget hands
   // the organizations over as a fresh array on every settings change, and a
   // var property signals every assignment, so without this a change of text
@@ -177,14 +179,14 @@ Item {
     if (event.inline === true) {
       // Fighters without a record spin until the lookup answers; with nothing
       // to look up the card is final already.
-      var names = Model.namesNeedingRecords(event, root.records).filter(function(n) { return !root.knownNa(n) })
+      var names = Model.namesNeedingRecords(event, root.liveRecords()).filter(function(n) { return !root.knownNa(n) })
       // The card must exist before the lookup is queued: nextRecords skips
       // jobs whose cards are gone, and would take this one for stale.
-      root.setCard(id, Model.buildCard(Model.withRecords(event, root.records, names.length === 0), {}), "", false)
+      root.setCard(id, Model.buildCard(Model.withRecords(event, root.liveRecords(), names.length === 0), {}), "", false)
       var dropped = root.queueRecords(event, names)
       // A card whose lookups did not fit the budget stays unsettled, so
       // opening it again asks again.
-      root.setCard(id, Model.buildCard(Model.withRecords(event, root.records, names.length === 0), {}), "", dropped.length === 0)
+      root.setCard(id, Model.buildCard(Model.withRecords(event, root.liveRecords(), names.length === 0), {}), "", dropped.length === 0)
       return
     }
     var kept = root.segmentCache[id]
@@ -198,6 +200,17 @@ Item {
     root.cards = next
     cardQueue.push({ id: id, event: event })
     root.nextCard()
+  }
+
+  // The records kept, minus those whose fighter has fought since.
+  function liveRecords() {
+    var out = {}, now = Date.now()
+    for (var n in root.records) {
+      var u = root.recordUntil[n]
+      if (u !== undefined && u <= now && root.records[n] !== "blocked" && root.records[n] !== "n/a") continue
+      out[n] = root.records[n]
+    }
+    return out
   }
 
   // A fighter Sherdog has no record for, asked about within the cache window.
@@ -273,6 +286,7 @@ Item {
     if (!root.userRefresh()) return
     root.segmentCache = ({})
     root.recordTimes = ({})
+    root.recordUntil = ({})
     var blocked = {}
     for (var n in root.records) if (root.records[n] === "blocked" && root.blockedAt[n] !== undefined) blocked[n] = "blocked"
     root.records = blocked
@@ -406,14 +420,22 @@ Item {
           for (var t in root.recordTimes) times[t] = root.recordTimes[t]
           var blocked = {}
           for (var b in root.blockedAt) blocked[b] = root.blockedAt[b]
+          var until = {}
+          for (var u in root.recordUntil) until[u] = root.recordUntil[u]
           for (var n in found) {
             all[n] = found[n]
+            delete until[n]
             if (found[n] === "blocked") blocked[n] = Date.now()
             else times[n] = Date.now()
+            if (Model.recordShape.test(found[n])) {
+              var to = Model.recordUntil(n, job.events, Date.now())
+              if (to > 0) until[n] = to
+            }
           }
           // Bounded memory: the newest answers stay, blocked ones go first.
           var keep = Model.newestEntries(all, Model.cacheRecordMax, function(k) { return times[k] })
-          for (var o in all) if (keep[o] === undefined) { delete times[o]; delete blocked[o] }
+          for (var o in all) if (keep[o] === undefined) { delete times[o]; delete blocked[o]; delete until[o] }
+          root.recordUntil = until
           root.blockedAt = blocked
           all = keep
           root.records = all
@@ -440,7 +462,7 @@ Item {
       // with the time of the refusal, so the backoff survives a restart.
       var recs = {}
       for (var n in root.recordTimes)
-        if (root.records[n] !== undefined && root.records[n] !== "blocked") recs[n] = { at: root.recordTimes[n], value: root.records[n] }
+        if (root.records[n] !== undefined && root.records[n] !== "blocked") recs[n] = { at: root.recordTimes[n], value: root.records[n], until: root.recordUntil[n] }
       for (var b in root.blockedAt)
         if (root.records[b] === "blocked") recs[b] = { at: root.blockedAt[b], value: "blocked" }
       cardsFile.setText(Model.serializeCardCache(
@@ -455,23 +477,26 @@ Item {
     printErrors: false
     onLoaded: {
       var kept = Model.parseCardCache(text(), Date.now())
-      var segs = {}, all = {}, times = {}, blocked = {}
+      var segs = {}, all = {}, times = {}, blocked = {}, until = {}
       var k
       for (k in kept.segments) segs[k] = kept.segments[k]
       for (k in root.segmentCache) segs[k] = root.segmentCache[k]
       for (k in root.records) all[k] = root.records[k]
       for (k in root.recordTimes) times[k] = root.recordTimes[k]
       for (k in root.blockedAt) blocked[k] = root.blockedAt[k]
+      for (k in root.recordUntil) until[k] = root.recordUntil[k]
       for (k in kept.records) {
         if (all[k] !== undefined) continue
         all[k] = kept.records[k].value
         if (all[k] === "blocked") blocked[k] = kept.records[k].at
         else times[k] = kept.records[k].at
+        if (kept.records[k].until !== undefined) until[k] = kept.records[k].until
       }
       root.segmentCache = segs
       root.records = all
       root.recordTimes = times
       root.blockedAt = blocked
+      root.recordUntil = until
     }
   }
 

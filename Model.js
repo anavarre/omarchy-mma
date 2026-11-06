@@ -1485,11 +1485,47 @@ function newestEntries(map, max, atOf) {
   return out
 }
 
+// A real record cannot change before the fighter's next fight, so it is kept
+// until that fight starts, rather than for the 12 hours everything else gets.
+// "n/a" and "blocked" answers do not qualify: they are asked again after 12
+// hours.
+var recordUntilMaxMs = 366 * 24 * 60 * 60 * 1000
+// Asked for while a fight is on or over but not yet marked done, a record is
+// likely the old one: it is looked up again after this, so the new one shows
+// soon after the fight.
+var recordRetryMs = 10 * 60 * 1000
+var recordLiveWindowMs = 12 * 60 * 60 * 1000
+
+// When the record of `name` stops being good: the start of the earliest
+// upcoming event of `events` that has the fighter on its card. If the fighter's
+// event has started and their fight is not over yet, a short retry delay. 0
+// (the usual 12 hours) when neither applies.
+function recordUntil(name, events, now) {
+  var best = 0
+  var live = false
+  list(events).forEach(function(e) {
+    var t = Date.parse(e && e.date)
+    if (!isFinite(t)) return
+    var fights = list(e.fights).filter(function(f) { return list(f && f.fighters).some(function(x) { return x && x.name === name }) })
+    if (fights.length === 0) return
+    if (t > now) { if (best === 0 || t < best) best = t; return }
+    if (now - t < recordLiveWindowMs && fights.some(function(f) { return f.done !== true })) live = true
+  })
+  return best !== 0 ? best : live ? now + recordRetryMs : 0
+}
+
+// Whether a cached record entry { at, until } is still good at `now`.
+function recordFresh(at, until, now) {
+  var u = Number(until)
+  if (isFinite(u) && u > now && u - now <= recordUntilMaxMs) return true
+  return cardCacheFresh(at, now)
+}
+
 function serializeCardCache(segments, records) {
   return JSON.stringify({ version: 1, segments: segments, records: records })
 }
 
-// { segments: { id: { at, data } }, records: { name: { at, value } } }, fresh
+// { segments: { id: { at, data } }, records: { name: { at, value, until? } } }, fresh
 // entries only, each rebuilt field by field: the file is not to be trusted.
 // A "blocked" record is kept too: it is what stops the vendor that refused
 // from being asked again for 12 hours, across restarts.
@@ -1519,9 +1555,13 @@ function parseCardCache(text, now) {
   var recs = isObject(data.records) ? data.records : ({})
   Object.keys(recs).forEach(function(name) {
     var e = recs[name]
-    if (!isObject(e) || !cardCacheFresh(e.at, now)) return
+    if (!isObject(e)) return
     var v = str(e.value)
-    if (recordShape.test(v) || v === "n/a" || v === "blocked") out.records[name] = { at: Number(e.at), value: v }
+    var real = recordShape.test(v)
+    if (!(real || v === "n/a" || v === "blocked")) return
+    if (!(real ? recordFresh(e.at, e.until, now) : cardCacheFresh(e.at, now))) return
+    out.records[name] = { at: Number(e.at), value: v }
+    if (real && Number(e.until) > now) out.records[name].until = Number(e.until)
   })
   out.records = newestEntries(out.records, cacheRecordMax, function(k, v) { return v.at })
   return out

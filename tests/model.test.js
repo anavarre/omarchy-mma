@@ -1351,3 +1351,27 @@ test("bin/mma-api caps, paces and pins its requests", () => {
   assert.strictEqual((api.match(/n % SITE_PARALLEL/g) || []).length, 4, "ARES cards, ARES results, Sherdog events, records");
   assert.ok(!/status\?lang=en" > "\$tmp\/\$n\.s\.json" 2> \/dev\/null \\\n\s*\|\| rm -f "\$tmp\/\$n\.s\.json"; \} &/.test(api));
 });
+
+test("a real record is kept until the fighter's next fight starts; N/A and blocked keep 12 hours", () => {
+  const day = 24 * 3600 * 1000;
+  const now = 100 * day;
+  const card = (date, done) => ({ date: new Date(date).toISOString(), fights: [{ done, fighters: [{ name: "A" }, { name: "B" }] }] });
+  const event = card(now + 10 * day, false);
+  const past = card(now - 5 * day, true);
+  assert.strictEqual(M.recordUntil("A", [past, event], now), now + 10 * day);
+  assert.strictEqual(M.recordUntil("Nobody", [event], now), 0);
+  assert.strictEqual(M.recordUntil("A", [past], now), 0);
+  // The fight is on but not over: look again soon, so the new record shows.
+  assert.strictEqual(M.recordUntil("A", [card(now - 3600 * 1000, false)], now), now + M.recordRetryMs);
+  const until = now + 10 * day;
+  // 8 days old, yet still good: the fight has not started.
+  const at = now - 8 * day;
+  const text = M.serializeCardCache({}, {
+    A: { at, until, value: "10-2-0" }, Old: { at, value: "1-0-0" },
+    Na: { at, until, value: "n/a" }, Far: { at, until: now + 5 * 366 * day, value: "2-0-0" }
+  });
+  const back = M.parseCardCache(text, now);
+  assert.deepStrictEqual(Object.keys(back.records), ["A"]);
+  assert.strictEqual(back.records.A.until, until);
+  assert.deepStrictEqual(Object.keys(M.parseCardCache(text, until + 1).records), []);
+});

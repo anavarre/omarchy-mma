@@ -91,8 +91,9 @@ No key or account is needed.
   opening one makes no second request for the card itself.
 - Wikipedia has no fight records, so opening a card also looks each fighter up
   on [Sherdog](https://www.sherdog.com) (one search and one page per fighter,
-  four fighters at a time, kept for 12 hours). The record appears under the
-  name a moment after the card opens. A fighter is shown a record only when
+  four fighters at a time). A record found is kept until the fighter's next
+  fight starts, since it cannot change before, then looked up again; an N/A is
+  kept for 12 hours. The record appears under the name a moment after the card opens. A fighter is shown a record only when
   Sherdog has exactly one fighter by that name, so namesakes and fighters it
   does not list show none rather than a wrong one. When Sherdog refuses to
   answer (it runs a bot challenge), that fighter is not asked about again for
@@ -134,7 +135,7 @@ needs a provider of its own; suggestions are welcome, please open an issue.
 
 Card details (segments, and the fighter records of Wikipedia-sourced promotions,
 which are looked up when a card is opened or is the next event) are cached for
-12 hours in `~/.cache/omarchy-mma/cards.json`. `r` is a hard refresh that
+12 hours, except a fighter's record, which stays until their next fight starts, in `~/.cache/omarchy-mma/cards.json`. `r` is a hard refresh that
 bypasses and clears that cache (except the list of fighters Sherdog refused);
 the background refresh and middle-click use it. `r` and middle-click run at
 most once every 30 seconds, so a held key is not a burst of requests.
