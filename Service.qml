@@ -65,6 +65,10 @@ Item {
   property string selectionKey: ""
   // When the user last asked for a refresh (r or middle-click).
   property double manualRefreshAt: 0
+  // The event whose card the panel is showing, if any. A list refresh rebuilds
+  // it too, since the cards it forgets would otherwise leave the open one empty.
+  property string openCardId: ""
+  property double cardRefreshAt: 0
 
   onOrganizationsChanged: {
     if (root.organizations === null) return
@@ -143,6 +147,7 @@ Item {
     // soonest event's now rather than when the panel opens.
     var next = Model.nextEvent(root.events)
     if (next) root.loadCard(next.id)
+    if (root.openCardId !== "") root.loadCard(root.openCardId)
     // Wikipedia's cards carry no records; those are looked up when a card is
     // opened (or is the next event), never for every event a refresh brings.
   }
@@ -293,6 +298,39 @@ Item {
     root.recordQueue = []
     root.forgetCards()
     root.refresh()
+    root.saveCache()
+  }
+
+  // The r key on a card: fetch this event again, and nothing else. Its
+  // segments and its fighters' records are dropped (a blocked fighter stays
+  // blocked: that backoff is not ours to lift) and the card is rebuilt in place.
+  function refreshCard(id) {
+    var event = root.eventById(id)
+    // Its own, shorter limit: the 30 seconds of a full refresh would swallow a
+    // second press without a sign of life. One card is a handful of requests.
+    if (!event || Date.now() - root.cardRefreshAt < 3000) return
+    root.cardRefreshAt = Date.now()
+    var seg = {}
+    for (var k in root.segmentCache) if (k !== id) seg[k] = root.segmentCache[k]
+    root.segmentCache = seg
+    var recs = {}, times = {}, until = {}
+    for (var n in root.records) recs[n] = root.records[n]
+    for (var t in root.recordTimes) times[t] = root.recordTimes[t]
+    for (var u in root.recordUntil) until[u] = root.recordUntil[u]
+    ;(event.fights || []).forEach(function(f) {
+      ;(f.fighters || []).forEach(function(x) {
+        if (!x || !x.name || recs[x.name] === "blocked") return
+        delete recs[x.name]; delete times[x.name]; delete until[x.name]
+      })
+    })
+    root.records = recs
+    root.recordTimes = times
+    root.recordUntil = until
+    root.recordQueue = []
+    var cards = {}
+    for (var c in root.cards) if (c !== id) cards[c] = root.cards[c]
+    root.cards = cards
+    root.loadCard(id)
     root.saveCache()
   }
 

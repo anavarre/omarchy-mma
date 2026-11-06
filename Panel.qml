@@ -201,6 +201,8 @@ Panel {
     function loadCard(id) {}
     function refresh() {}
     function hardRefresh() {}
+    function refreshCard(id) {}
+    property string openCardId: ""
     function openUrl(url) {}
   }
 
@@ -231,7 +233,8 @@ Panel {
 
   // The search box only takes the keyboard when asked ("f"); every other view
   // change hands it back to the key catcher.
-  onShowCardChanged: keys.forceActiveFocus()
+  onShowCardChanged: { keys.forceActiveFocus(); root.mma.openCardId = root.showCard ? root.eventId : "" }
+  onEventIdChanged: root.mma.openCardId = root.showCard ? root.eventId : ""
   onShowSettingsChanged: keys.forceActiveFocus()
 
   onEventsChanged: root.selected = Math.max(0, Math.min(root.events.length - 1, root.selected))
@@ -432,7 +435,10 @@ Panel {
         else if (text === "f" && !root.showCard) searchField.forceActiveFocus()
         else if (text === "g" && !root.showCard) root.cycleOrg()
         else if (text === "s") root.openSettings()
-        else if (text === "r") root.mma.hardRefresh()
+        else if (text === "r") {
+          if (root.showCard) root.mma.refreshCard(root.eventId)
+          else root.mma.hardRefresh()
+        }
         else if (text === "o") {
           var e = root.showCard ? root.currentEvent : root.events[root.selected]
           if (e) root.mma.openUrl(e.url)
@@ -1366,7 +1372,7 @@ Panel {
           }
           Text {
             visible: !root.showSettings
-            text: root.loading ? "Refreshing…" : "r Refresh"
+            text: root.loading || (root.showCard && root.card && root.card.loading) ? "Refreshing…" : "r Refresh"
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: root.fs(Style.font.bodySmall)
