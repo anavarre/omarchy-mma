@@ -538,6 +538,15 @@ Panel {
             accent: root.accent
             options: [{ value: "", label: "All" }].concat(root.orgChoices.map(function(o) { return { value: o.id, label: o.label } }))
             onChanged: function(v) { root.orgFilter = v }
+            // Closing the popup (Esc or a pick) hands the keys back to the list.
+            onPopupOpenChanged: if (!popupOpen) keys.forceActiveFocus()
+            // Tab moves on to the search box.
+            Keys.onTabPressed: function(event) {
+              if (event.modifiers & Qt.ShiftModifier) { event.accepted = false; return }
+              close()
+              searchField.forceActiveFocus()
+              event.accepted = true
+            }
           }
           // Dropdown assigns its own value on pick; keep it following the filter ("g" cycles it too).
           Binding { target: orgDropdown; property: "value"; value: root.activeOrg }
@@ -558,8 +567,14 @@ Panel {
             }
             // Leaves the box, keeping the filter; Esc again closes the panel.
             Keys.onEscapePressed: keys.forceActiveFocus()
+            // Tab goes on to the event list; Shift+Tab still switches panel.
             Keys.onTabPressed: function(event) {
-              if (!root.switchPanel(event.modifiers & Qt.ShiftModifier ? -1 : 1)) event.accepted = false
+              if (event.modifiers & Qt.ShiftModifier) {
+                if (!root.switchPanel(-1)) event.accepted = false
+              } else {
+                keys.forceActiveFocus()
+                event.accepted = true
+              }
             }
           }
 
