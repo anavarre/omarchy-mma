@@ -520,12 +520,18 @@ function recentlyFinished(e, now, days) {
   return isFinite(over) && Number(now) - over < knownKeepDays(days) * 86400000
 }
 
-// What the list shows, in date order: every unfinished event, and finished
-// ones for `days` days after they ended.
+// What the list shows: finished events (for `days` days after they ended)
+// first, then every unfinished one, each group in date order. Grouping matters
+// because the panel puts a header at every change of group, and an unfinished
+// event with an old date (live, postponed, never marked final) would otherwise
+// split the list into several groups.
 function visibleEvents(events, now, days) {
-  return sortEvents(events.filter(function(e) {
+  var shown = sortEvents(events.filter(function(e) {
     return e.finished !== true || recentlyFinished(e, now, days)
   }))
+  var past = shown.filter(function(e) { return e.finished === true })
+  var upcoming = shown.filter(function(e) { return e.finished !== true })
+  return past.concat(upcoming)
 }
 
 // Lower-cased, accent-free text, so "jiri prochazka" finds "Jiří Procházka".

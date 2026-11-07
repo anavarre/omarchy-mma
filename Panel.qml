@@ -117,6 +117,7 @@ Panel {
   readonly property bool hasMore: root.allEvents.length > root.shownCount
   function showMore() {
     if (root.hasMore) root.shownCount += root.pageSize
+    Qt.callLater(function() { root.revealSelected() })
   }
   readonly property bool loading: root.mma.loading === true
   readonly property bool offline: root.mma.offline === true
@@ -256,7 +257,9 @@ Panel {
   onShowCardChanged: keys.forceActiveFocus()
   onShowSettingsChanged: keys.forceActiveFocus()
 
-  onEventsChanged: root.selected = Math.max(0, Math.min(root.events.length - 1, root.selected))
+  // The "load more" row sits after the last event and is selectable like one.
+  readonly property int lastSelectable: root.events.length - 1 + (root.hasMore ? 1 : 0)
+  onLastSelectableChanged: root.selected = Math.max(0, Math.min(root.lastSelectable, root.selected))
 
   // Keyboard-only: hover also moves the selection, and scrolling under a
   // stationary pointer would then fight it.
@@ -273,11 +276,13 @@ Panel {
 
   function moveSelection(dy) {
     if (root.events.length === 0) return
-    if (dy > 0 && root.selected + dy >= root.events.length - 1) root.showMore()
-    root.selected = Math.max(0, Math.min(root.events.length - 1, root.selected + dy))
+    root.selected = Math.max(0, Math.min(root.lastSelectable, root.selected + dy))
   }
 
   function openEvent(index) {
+    // On the "load more" row, Enter loads the next page; the selection then
+    // lands on the first new event.
+    if (index === root.events.length && root.hasMore) { root.showMore(); return }
     var e = root.events[index]
     if (!e) return
     root.eventId = e.id
@@ -384,8 +389,8 @@ Panel {
   }
 
   function revealSelected() {
-    var item = eventRepeater.itemAt(root.selected)
-    if (!item) return
+    var item = root.selected === root.events.length ? loadMoreRow : eventRepeater.itemAt(root.selected)
+    if (!item || !item.visible) return
     if (item.y < listView.contentY) listView.contentY = item.y
     else if (item.y + item.height > listView.contentY + listView.height)
       listView.contentY = item.y + item.height - listView.height
@@ -622,9 +627,6 @@ Panel {
           contentHeight: listColumn.implicitHeight
           clip: true
           boundsBehavior: Flickable.StopAtBounds
-          onContentYChanged: {
-            if (root.hasMore && contentY + height >= contentHeight - Style.space(40)) root.showMore()
-          }
 
           Column {
             id: listColumn
@@ -788,6 +790,31 @@ Panel {
                     onClicked: root.openEvent(row.index)
                   }
                 }
+              }
+            }
+
+            Rectangle {
+              id: loadMoreRow
+              visible: root.hasMore
+              width: listColumn.width
+              height: visible ? loadMoreIcon.implicitHeight + Style.space(14) : 0
+              radius: Style.space(6)
+              color: root.selected === root.events.length ? Qt.alpha(root.accent, 0.18) : "transparent"
+              Text {
+                id: loadMoreIcon
+                anchors.centerIn: parent
+                color: root.selected === root.events.length ? root.accent : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: root.fs(Style.font.body)
+                // nf-fa-angle_double_down (U+F103)
+                text: "\uf103"
+              }
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onEntered: root.selected = root.events.length
+                onClicked: root.showMore()
               }
             }
           }
