@@ -1375,3 +1375,8 @@ test("a real record is kept until the fighter's next fight starts; N/A and block
   assert.strictEqual(back.records.A.until, until);
   assert.deepStrictEqual(Object.keys(M.parseCardCache(text, until + 1).records), []);
 });
+
+test("parseScoreboard reads a bounded number of events from a padded response", () => {
+  const events = Array.from({ length: 150000 }, (_, i) => ({ id: String(i), date: "2026-11-01T00:00Z" }))
+  assert.ok(M.parseScoreboard({ events }, "ufc").length <= 200)
+})
