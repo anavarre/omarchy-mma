@@ -193,6 +193,17 @@ test("visibleEvents keeps finished events for the chosen days, in date order", (
   assert.strictEqual(M.nextEvent([ev("a", "x", true)]), null);
 });
 
+test("visibleEvents puts an unfinished event with an old date after the finished ones", () => {
+  const now = Date.parse("2026-11-10T12:00:00Z");
+  const ev = (id, date, finished) => ({ id, date, finished });
+  const list = [ev("stale", "2026-11-01T22:00:00Z", false), ev("done", "2026-11-09T22:00:00Z", true), ev("next", "2026-11-20T22:00:00Z", false)];
+  const shown = M.visibleEvents(list, now, 3);
+  assert.deepStrictEqual(shown.map((e) => e.id), ["done", "stale", "next"]);
+  let changes = 0;
+  shown.forEach((e, i) => { if (i > 0 && (shown[i - 1].finished === true) !== (e.finished === true)) changes++; });
+  assert.strictEqual(changes, 1);
+});
+
 test("the challenger is always on the right, whatever order ESPN lists them in", () => {
   const e = byName(ufc, "Moicano");
   // The scoreboard lists Lisboa (order 2) before Szabova (order 1).
@@ -1375,3 +1386,8 @@ test("a real record is kept until the fighter's next fight starts; N/A and block
   assert.strictEqual(back.records.A.until, until);
   assert.deepStrictEqual(Object.keys(M.parseCardCache(text, until + 1).records), []);
 });
+
+test("parseScoreboard reads a bounded number of events from a padded response", () => {
+  const events = Array.from({ length: 150000 }, (_, i) => ({ id: String(i), date: "2026-11-01T00:00Z" }))
+  assert.ok(M.parseScoreboard({ events }, "ufc").length <= 200)
+})

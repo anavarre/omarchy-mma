@@ -117,6 +117,7 @@ Panel {
   readonly property bool hasMore: root.allEvents.length > root.shownCount
   function showMore() {
     if (root.hasMore) root.shownCount += root.pageSize
+    Qt.callLater(function() { root.revealSelected() })
   }
   readonly property bool loading: root.mma.loading === true
   readonly property bool offline: root.mma.offline === true
@@ -176,7 +177,17 @@ Panel {
   // Winners are spoilers, so they stay hidden until asked for.
   property bool showResults: false
   readonly property var textScales: ({ small: 0.85, medium: 1.0, large: 1.2, xlarge: 1.45 })
-  readonly property real textScale: root.textScales[root.textSize] || 1.0
+  readonly property real requestedScale: root.textScales[root.textSize] || 1.0
+  // The chosen size is a preference; the screen has the final say. Scale down
+  // until the card keeps room for several rows plus the footer hints, so the
+  // list, settings and shortcuts stay reachable on any screen size or ratio.
+  readonly property real fitScale: {
+    var h = panel.availableCardHeight, w = panel.availableCardWidth
+    var byHeight = h > 0 ? h / Style.space(620) : root.requestedScale
+    var byWidth = w > 0 ? w / Style.space(540) : root.requestedScale
+    return Math.max(0.6, Math.min(byHeight, byWidth))
+  }
+  readonly property real textScale: Math.min(root.requestedScale, root.fitScale)
 
   // Every font size in this panel goes through here, so one setting moves all
   // of them together.
@@ -186,8 +197,20 @@ Panel {
   readonly property real cardWidth: panel.fittedContentWidth(Style.space(Math.round(520 * root.textScale)))
   // What the card has left for the scrolling body once the header, footer and
   // spacing are placed.
-  readonly property real bodyMaxHeight: Math.max(Style.space(160),
-    panel.availableCardHeight - panel.verticalContentInset - (header.visible ? header.implicitHeight : 0) - footer.implicitHeight - Style.space(20))
+  // Measured from what is actually showing (status line, search row, hint
+  // chevron, wrapped footer...) rather than guessed, so nothing overflows.
+  readonly property real chromeHeight: {
+    var kids = content.children, used = 0, shown = 0
+    for (var k = 0; k < kids.length; k++) {
+      var c = kids[k]
+      if (!c.visible) continue
+      shown++
+      if (c.objectName !== "body") used += c.height
+    }
+    return used + Math.max(0, shown - 1) * content.spacing
+  }
+  readonly property real bodyMaxHeight: Math.max(Style.space(80),
+    panel.availableCardHeight - panel.verticalContentInset - root.chromeHeight)
 
   QtObject {
     id: inertService
@@ -237,15 +260,32 @@ Panel {
   onEventIdChanged: root.mma.openCardId = root.showCard ? root.eventId : ""
   onShowSettingsChanged: keys.forceActiveFocus()
 
-  onEventsChanged: root.selected = Math.max(0, Math.min(root.events.length - 1, root.selected))
+  // The "load more" row sits after the last event and is selectable like one.
+  readonly property int lastSelectable: root.events.length - 1 + (root.hasMore ? 1 : 0)
+  onLastSelectableChanged: root.selected = Math.max(0, Math.min(root.lastSelectable, root.selected))
+
+  // Keyboard-only: hover also moves the selection, and scrolling under a
+  // stationary pointer would then fight it.
+  function ensureSettingsVisible() {
+    var sel = root.settingsSelected, n = root.promotions.length
+    var item = sel < n ? settingsRepeater.itemAt(sel)
+      : [zoneItem, keepItem, resultsItem, sizeItem][sel - n]
+    if (!item) return
+    var f = settingsFlick, top = item.y, bottom = item.y + item.height
+    if (top < f.contentY) f.contentY = top
+    else if (bottom > f.contentY + f.height) f.contentY = bottom - f.height
+    f.contentY = Math.max(0, Math.min(Math.max(0, f.contentHeight - f.height), f.contentY))
+  }
 
   function moveSelection(dy) {
     if (root.events.length === 0) return
-    if (dy > 0 && root.selected + dy >= root.events.length - 1) root.showMore()
-    root.selected = Math.max(0, Math.min(root.events.length - 1, root.selected + dy))
+    root.selected = Math.max(0, Math.min(root.lastSelectable, root.selected + dy))
   }
 
   function openEvent(index) {
+    // On the "load more" row, Enter loads the next page; the selection then
+    // lands on the first new event.
+    if (index === root.events.length && root.hasMore) { root.showMore(); return }
     var e = root.events[index]
     if (!e) return
     root.eventId = e.id
@@ -352,8 +392,8 @@ Panel {
   }
 
   function revealSelected() {
-    var item = eventRepeater.itemAt(root.selected)
-    if (!item) return
+    var item = root.selected === root.events.length ? loadMoreRow : eventRepeater.itemAt(root.selected)
+    if (!item || !item.visible) return
     if (item.y < listView.contentY) listView.contentY = item.y
     else if (item.y + item.height > listView.contentY + listView.height)
       listView.contentY = item.y + item.height - listView.height
@@ -406,7 +446,10 @@ Panel {
       anchors.fill: parent
       onMoveRequested: function(dx, dy) {
         if (root.showSettings) {
-          if (dy !== 0) root.settingsSelected = Math.max(0, Math.min(root.settingsRowCount - 1, root.settingsSelected + dy))
+          if (dy !== 0) {
+            root.settingsSelected = Math.max(0, Math.min(root.settingsRowCount - 1, root.settingsSelected + dy))
+            root.ensureSettingsVisible()
+          }
           else if (root.settingsSelected >= root.promotions.length) root.stepSettingsRow(dx)
           else if (dx < 0) root.showSettings = false
         }
@@ -597,6 +640,7 @@ Panel {
         // -------------------------------------------------------- event list
         Flickable {
           id: listView
+          objectName: "body"
           visible: !root.showSettings && !root.showCard && root.events.length > 0
           width: parent.width
           height: visible ? Math.min(listColumn.implicitHeight, root.bodyMaxHeight) : 0
@@ -604,9 +648,6 @@ Panel {
           contentHeight: listColumn.implicitHeight
           clip: true
           boundsBehavior: Flickable.StopAtBounds
-          onContentYChanged: {
-            if (root.hasMore && contentY + height >= contentHeight - Style.space(40)) root.showMore()
-          }
 
           Column {
             id: listColumn
@@ -772,6 +813,31 @@ Panel {
                 }
               }
             }
+
+            Rectangle {
+              id: loadMoreRow
+              visible: root.hasMore
+              width: listColumn.width
+              height: visible ? loadMoreIcon.implicitHeight + Style.space(14) : 0
+              radius: Style.space(6)
+              color: root.selected === root.events.length ? Qt.alpha(root.accent, 0.18) : "transparent"
+              Text {
+                id: loadMoreIcon
+                anchors.centerIn: parent
+                color: root.selected === root.events.length ? root.accent : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: root.fs(Style.font.body)
+                // nf-fa-angle_double_down (U+F103)
+                text: "\uf103"
+              }
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onEntered: root.selected = root.events.length
+                onClicked: root.showMore()
+              }
+            }
           }
         }
 
@@ -797,395 +863,410 @@ Panel {
         }
 
         // ---------------------------------------------------------- settings
-        Column {
-          id: settingsView
+        Flickable {
+          id: settingsFlick
+          objectName: "body"
           visible: root.showSettings
           width: parent.width
-          spacing: Style.space(2)
+          height: visible ? Math.min(settingsView.implicitHeight, root.bodyMaxHeight) : 0
+          contentWidth: width
+          contentHeight: settingsView.implicitHeight
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          Column {
+            width: settingsFlick.width
+            id: settingsView
+            spacing: Style.space(2)
 
-          Repeater {
-            model: root.showSettings ? root.promotions : []
-
-            Column {
-              id: orgWrap
-              required property int index
-              required property var modelData
-              width: settingsView.width
-              spacing: Style.space(2)
-
-              Text {
-                width: parent.width
-                visible: orgWrap.modelData.experimental === true
-                  && (orgWrap.index === 0 || root.promotions[orgWrap.index - 1].experimental !== true)
-                height: visible ? implicitHeight + Style.space(10) : 0
-                verticalAlignment: Text.AlignBottom
-                elide: Text.ElideRight
-                textFormat: Text.PlainText
-                text: "Experimental organizations to show events for"
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: root.fs(Style.font.bodySmall)
-              }
-
-            Rectangle {
-              id: orgRow
-              readonly property int index: orgWrap.index
-              readonly property var modelData: orgWrap.modelData
-              readonly property bool on: root.organizationOn(orgRow.modelData.id)
-              width: settingsView.width
-              height: Math.max(orgText.implicitHeight, Style.space(Math.round(32 * root.textScale))) + Style.space(14)
-              radius: Style.space(6)
-              opacity: orgRow.modelData.enabled ? 1 : 0.5
-              color: orgRow.index === root.settingsSelected ? Qt.alpha(root.accent, 0.18) : "transparent"
-
-              Rectangle {
-                id: box
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(8)
-                width: Style.space(Math.round(16 * root.textScale))
-                height: width
-                radius: Style.space(3)
-                color: orgRow.on ? root.accent : "transparent"
-                border.width: 1
-                border.color: orgRow.on ? root.accent : root.dim
-                Text {
-                  anchors.centerIn: parent
-                  visible: orgRow.on
-                  text: "✓"
-                  color: Color.background
-                  font.family: root.fontFamily
-                  font.pixelSize: root.fs(Style.font.bodySmall)
-                  font.bold: true
-                }
-              }
-
-              Item {
-                id: orgLogo
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.left: box.right
-                anchors.leftMargin: Style.space(10)
-                width: Style.space(Math.round(32 * root.textScale))
-                height: width
-                Image {
-                  anchors.fill: parent
-                  visible: orgRow.modelData.logo !== "" && status !== Image.Error
-                  source: orgRow.modelData.logo ? Qt.resolvedUrl(orgRow.modelData.logo) : ""
-                  fillMode: Image.PreserveAspectFit
-                  sourceSize.width: 128
-                  sourceSize.height: 128
-                  smooth: true
-                  mipmap: true
-                }
-              }
+            Repeater {
+              id: settingsRepeater
+              model: root.showSettings ? root.promotions : []
 
               Column {
-                id: orgText
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.left: orgLogo.right
-                anchors.right: parent.right
-                anchors.leftMargin: Style.space(10)
-                anchors.rightMargin: Style.space(8)
+                id: orgWrap
+                required property int index
+                required property var modelData
+                width: settingsView.width
+                spacing: Style.space(2)
+
                 Text {
                   width: parent.width
+                  visible: orgWrap.modelData.experimental === true
+                    && (orgWrap.index === 0 || root.promotions[orgWrap.index - 1].experimental !== true)
+                  height: visible ? implicitHeight + Style.space(10) : 0
+                  verticalAlignment: Text.AlignBottom
                   elide: Text.ElideRight
                   textFormat: Text.PlainText
-                  text: orgRow.modelData.label + (orgRow.modelData.enabled ? "" : " (coming soon)")
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: root.fs(Style.font.body)
-                }
-                Text {
-                  width: parent.width
-                  elide: Text.ElideRight
-                  textFormat: Text.PlainText
-                  text: orgRow.modelData.description
+                  text: "Experimental organizations to show events for"
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: root.fs(Style.font.bodySmall)
                 }
-              }
 
-              MouseArea {
+              Rectangle {
+                id: orgRow
+                readonly property int index: orgWrap.index
+                readonly property var modelData: orgWrap.modelData
+                readonly property bool on: root.organizationOn(orgRow.modelData.id)
+                width: settingsView.width
+                height: Math.max(orgText.implicitHeight, Style.space(Math.round(32 * root.textScale))) + Style.space(14)
+                radius: Style.space(6)
+                opacity: orgRow.modelData.enabled ? 1 : 0.5
+                color: orgRow.index === root.settingsSelected ? Qt.alpha(root.accent, 0.18) : "transparent"
+
+                Rectangle {
+                  id: box
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.space(8)
+                  width: Style.space(Math.round(16 * root.textScale))
+                  height: width
+                  radius: Style.space(3)
+                  color: orgRow.on ? root.accent : "transparent"
+                  border.width: 1
+                  border.color: orgRow.on ? root.accent : root.dim
+                  Text {
+                    anchors.centerIn: parent
+                    visible: orgRow.on
+                    text: "✓"
+                    color: Color.background
+                    font.family: root.fontFamily
+                    font.pixelSize: root.fs(Style.font.bodySmall)
+                    font.bold: true
+                  }
+                }
+
+                Item {
+                  id: orgLogo
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.left: box.right
+                  anchors.leftMargin: Style.space(10)
+                  width: Style.space(Math.round(32 * root.textScale))
+                  height: width
+                  Image {
+                    anchors.fill: parent
+                    visible: orgRow.modelData.logo !== "" && status !== Image.Error
+                    source: orgRow.modelData.logo ? Qt.resolvedUrl(orgRow.modelData.logo) : ""
+                    fillMode: Image.PreserveAspectFit
+                    sourceSize.width: 128
+                    sourceSize.height: 128
+                    smooth: true
+                    mipmap: true
+                  }
+                }
+
+                Column {
+                  id: orgText
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.left: orgLogo.right
+                  anchors.right: parent.right
+                  anchors.leftMargin: Style.space(10)
+                  anchors.rightMargin: Style.space(8)
+                  Text {
+                    width: parent.width
+                    elide: Text.ElideRight
+                    textFormat: Text.PlainText
+                    text: orgRow.modelData.label + (orgRow.modelData.enabled ? "" : " (coming soon)")
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: root.fs(Style.font.body)
+                  }
+                  Text {
+                    width: parent.width
+                    elide: Text.ElideRight
+                    textFormat: Text.PlainText
+                    text: orgRow.modelData.description
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: root.fs(Style.font.bodySmall)
+                  }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: orgRow.modelData.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                  onEntered: root.settingsSelected = orgRow.index
+                  onClicked: root.toggleOrganization(orgRow.index)
+                }
+              }
+              }
+            }
+
+            // Event times follow this zone: "Event location" uses each venue's,
+            // "System" the computer's own.
+            Item {
+              id: zoneItem
+              width: parent.width
+              height: Math.max(timeZoneCaption.implicitHeight, timeZoneControls.implicitHeight) + Style.space(14)
+
+              Rectangle {
                 anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: orgRow.modelData.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                onEntered: root.settingsSelected = orgRow.index
-                onClicked: root.toggleOrganization(orgRow.index)
+                radius: Style.space(6)
+                color: root.settingsSelected === root.zoneRow ? Qt.alpha(root.accent, 0.18) : "transparent"
               }
-            }
-            }
-          }
-
-          // Event times follow this zone: "Event location" uses each venue's,
-          // "System" the computer's own.
-          Item {
-            width: parent.width
-            height: Math.max(timeZoneCaption.implicitHeight, timeZoneControls.implicitHeight) + Style.space(14)
-
-            Rectangle {
-              anchors.fill: parent
-              radius: Style.space(6)
-              color: root.settingsSelected === root.zoneRow ? Qt.alpha(root.accent, 0.18) : "transparent"
-            }
-            HoverHandler { onHoveredChanged: if (hovered) root.settingsSelected = root.zoneRow }
-
-            Text {
-              id: timeZoneCaption
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              width: parent.width - timeZoneControls.width - Style.space(16)
-              text: "Time zone"
-              elide: Text.ElideRight
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: root.fs(Style.font.body)
-            }
-
-            Row {
-              id: timeZoneControls
-              anchors.right: parent.right
-              anchors.rightMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(8)
-
-              PanelActionButton {
-                anchors.verticalCenter: parent.verticalCenter
-                // nf-fa-angle_left (U+F104)
-                iconText: "\uf104"
-                tooltipText: "Event location"
-                enabled: root.timeZone !== "venue"
-                foreground: root.foreground
-                hoverColor: root.foreground
-                fontSize: root.fs(Style.font.bodySmall)
-                onClicked: root.stepTimeZone(-1)
-              }
+              HoverHandler { onHoveredChanged: if (hovered) root.settingsSelected = root.zoneRow }
 
               Text {
+                id: timeZoneCaption
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(Math.round(130 * root.textScale))
-                horizontalAlignment: Text.AlignHCenter
-                text: root.timeZone === "venue" ? "Event location" : "System"
+                width: parent.width - timeZoneControls.width - Style.space(16)
+                text: "Time zone"
+                elide: Text.ElideRight
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: root.fs(Style.font.body)
               }
 
-              PanelActionButton {
+              Row {
+                id: timeZoneControls
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-                // nf-fa-angle_right (U+F105)
-                iconText: "\uf105"
-                tooltipText: "System"
-                enabled: root.timeZone !== "local"
-                foreground: root.foreground
-                hoverColor: root.foreground
-                fontSize: root.fs(Style.font.bodySmall)
-                onClicked: root.stepTimeZone(1)
+                spacing: Style.space(8)
+
+                PanelActionButton {
+                  anchors.verticalCenter: parent.verticalCenter
+                  // nf-fa-angle_left (U+F104)
+                  iconText: "\uf104"
+                  tooltipText: "Event location"
+                  enabled: root.timeZone !== "venue"
+                  foreground: root.foreground
+                  hoverColor: root.foreground
+                  fontSize: root.fs(Style.font.bodySmall)
+                  onClicked: root.stepTimeZone(-1)
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(Math.round(130 * root.textScale))
+                  horizontalAlignment: Text.AlignHCenter
+                  text: root.timeZone === "venue" ? "Event location" : "System"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: root.fs(Style.font.body)
+                }
+
+                PanelActionButton {
+                  anchors.verticalCenter: parent.verticalCenter
+                  // nf-fa-angle_right (U+F105)
+                  iconText: "\uf105"
+                  tooltipText: "System"
+                  enabled: root.timeZone !== "local"
+                  foreground: root.foreground
+                  hoverColor: root.foreground
+                  fontSize: root.fs(Style.font.bodySmall)
+                  onClicked: root.stepTimeZone(1)
+                }
               }
             }
-          }
 
-          Item {
-            width: parent.width
-            height: Math.max(keepCaption.implicitHeight, keepControls.implicitHeight) + Style.space(14)
+            Item {
+              id: keepItem
+              width: parent.width
+              height: Math.max(keepCaption.implicitHeight, keepControls.implicitHeight) + Style.space(14)
 
-            Rectangle {
-              anchors.fill: parent
-              radius: Style.space(6)
-              color: root.settingsSelected === root.keepRow ? Qt.alpha(root.accent, 0.18) : "transparent"
-            }
-            HoverHandler { onHoveredChanged: if (hovered) root.settingsSelected = root.keepRow }
-
-            Text {
-              id: keepCaption
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              width: parent.width - keepControls.width - Style.space(16)
-              text: "Keep finished events"
-              elide: Text.ElideRight
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: root.fs(Style.font.body)
-            }
-
-            Row {
-              id: keepControls
-              anchors.right: parent.right
-              anchors.rightMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(8)
-
-              PanelActionButton {
-                anchors.verticalCenter: parent.verticalCenter
-                // nf-fa-angle_left (U+F104)
-                iconText: "\uf104"
-                tooltipText: "Fewer days"
-                enabled: root.keepDaysIndex > 0
-                foreground: root.foreground
-                hoverColor: root.foreground
-                fontSize: root.fs(Style.font.bodySmall)
-                onClicked: root.stepKeepDays(-1)
+              Rectangle {
+                anchors.fill: parent
+                radius: Style.space(6)
+                color: root.settingsSelected === root.keepRow ? Qt.alpha(root.accent, 0.18) : "transparent"
               }
+              HoverHandler { onHoveredChanged: if (hovered) root.settingsSelected = root.keepRow }
 
               Text {
+                id: keepCaption
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(Math.round(70 * root.textScale))
-                horizontalAlignment: Text.AlignHCenter
-                text: root.keepFinishedDays + (root.keepFinishedDays === 1 ? " day" : " days")
+                width: parent.width - keepControls.width - Style.space(16)
+                text: "Keep finished events"
+                elide: Text.ElideRight
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: root.fs(Style.font.body)
               }
 
-              PanelActionButton {
+              Row {
+                id: keepControls
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-                // nf-fa-angle_right (U+F105)
-                iconText: "\uf105"
-                tooltipText: "More days"
-                enabled: root.keepDaysIndex < Model.keepDaysChoices.length - 1
-                foreground: root.foreground
-                hoverColor: root.foreground
-                fontSize: root.fs(Style.font.bodySmall)
-                onClicked: root.stepKeepDays(1)
+                spacing: Style.space(8)
+
+                PanelActionButton {
+                  anchors.verticalCenter: parent.verticalCenter
+                  // nf-fa-angle_left (U+F104)
+                  iconText: "\uf104"
+                  tooltipText: "Fewer days"
+                  enabled: root.keepDaysIndex > 0
+                  foreground: root.foreground
+                  hoverColor: root.foreground
+                  fontSize: root.fs(Style.font.bodySmall)
+                  onClicked: root.stepKeepDays(-1)
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(Math.round(70 * root.textScale))
+                  horizontalAlignment: Text.AlignHCenter
+                  text: root.keepFinishedDays + (root.keepFinishedDays === 1 ? " day" : " days")
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: root.fs(Style.font.body)
+                }
+
+                PanelActionButton {
+                  anchors.verticalCenter: parent.verticalCenter
+                  // nf-fa-angle_right (U+F105)
+                  iconText: "\uf105"
+                  tooltipText: "More days"
+                  enabled: root.keepDaysIndex < Model.keepDaysChoices.length - 1
+                  foreground: root.foreground
+                  hoverColor: root.foreground
+                  fontSize: root.fs(Style.font.bodySmall)
+                  onClicked: root.stepKeepDays(1)
+                }
               }
             }
-          }
 
-          // Winners, losers and how a fight ended are spoilers: hidden by default.
-          Item {
-            width: parent.width
-            height: Math.max(resultsCaption.implicitHeight, resultsControls.implicitHeight) + Style.space(14)
+            // Winners, losers and how a fight ended are spoilers: hidden by default.
+            Item {
+              id: resultsItem
+              width: parent.width
+              height: Math.max(resultsCaption.implicitHeight, resultsControls.implicitHeight) + Style.space(14)
 
-            Rectangle {
-              anchors.fill: parent
-              radius: Style.space(6)
-              color: root.settingsSelected === root.resultsRow ? Qt.alpha(root.accent, 0.18) : "transparent"
-            }
-            HoverHandler { onHoveredChanged: if (hovered) root.settingsSelected = root.resultsRow }
-
-            Text {
-              id: resultsCaption
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              width: parent.width - resultsControls.width - Style.space(16)
-              text: "Fight results"
-              elide: Text.ElideRight
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: root.fs(Style.font.body)
-            }
-
-            Row {
-              id: resultsControls
-              anchors.right: parent.right
-              anchors.rightMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(8)
-
-              PanelActionButton {
-                anchors.verticalCenter: parent.verticalCenter
-                // nf-fa-angle_left (U+F104)
-                iconText: "\uf104"
-                tooltipText: "Hide"
-                enabled: root.showResults
-                foreground: root.foreground
-                hoverColor: root.foreground
-                fontSize: root.fs(Style.font.bodySmall)
-                onClicked: root.pickShowResults(false)
+              Rectangle {
+                anchors.fill: parent
+                radius: Style.space(6)
+                color: root.settingsSelected === root.resultsRow ? Qt.alpha(root.accent, 0.18) : "transparent"
               }
+              HoverHandler { onHoveredChanged: if (hovered) root.settingsSelected = root.resultsRow }
 
               Text {
+                id: resultsCaption
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(Math.round(70 * root.textScale))
-                horizontalAlignment: Text.AlignHCenter
-                text: root.showResults ? "Show" : "Hide"
+                width: parent.width - resultsControls.width - Style.space(16)
+                text: "Fight results"
+                elide: Text.ElideRight
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: root.fs(Style.font.body)
               }
 
-              PanelActionButton {
+              Row {
+                id: resultsControls
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-                // nf-fa-angle_right (U+F105)
-                iconText: "\uf105"
-                tooltipText: "Show"
-                enabled: !root.showResults
-                foreground: root.foreground
-                hoverColor: root.foreground
-                fontSize: root.fs(Style.font.bodySmall)
-                onClicked: root.pickShowResults(true)
+                spacing: Style.space(8)
+
+                PanelActionButton {
+                  anchors.verticalCenter: parent.verticalCenter
+                  // nf-fa-angle_left (U+F104)
+                  iconText: "\uf104"
+                  tooltipText: "Hide"
+                  enabled: root.showResults
+                  foreground: root.foreground
+                  hoverColor: root.foreground
+                  fontSize: root.fs(Style.font.bodySmall)
+                  onClicked: root.pickShowResults(false)
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(Math.round(70 * root.textScale))
+                  horizontalAlignment: Text.AlignHCenter
+                  text: root.showResults ? "Show" : "Hide"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: root.fs(Style.font.body)
+                }
+
+                PanelActionButton {
+                  anchors.verticalCenter: parent.verticalCenter
+                  // nf-fa-angle_right (U+F105)
+                  iconText: "\uf105"
+                  tooltipText: "Show"
+                  enabled: !root.showResults
+                  foreground: root.foreground
+                  hoverColor: root.foreground
+                  fontSize: root.fs(Style.font.bodySmall)
+                  onClicked: root.pickShowResults(true)
+                }
               }
             }
-          }
 
-          // Same minus/plus control as miniflux; the panel redraws at the
-          // chosen size as soon as it is picked.
-          Item {
-            width: parent.width
-            height: Math.max(textSizeCaption.implicitHeight, textSizeControls.implicitHeight) + Style.space(14)
+            // Same minus/plus control as miniflux; the panel redraws at the
+            // chosen size as soon as it is picked.
+            Item {
+              id: sizeItem
+              width: parent.width
+              height: Math.max(textSizeCaption.implicitHeight, textSizeControls.implicitHeight) + Style.space(14)
 
-            Rectangle {
-              anchors.fill: parent
-              radius: Style.space(6)
-              color: root.settingsSelected === root.sizeRow ? Qt.alpha(root.accent, 0.18) : "transparent"
-            }
-            HoverHandler { onHoveredChanged: if (hovered) root.settingsSelected = root.sizeRow }
-
-            Text {
-              id: textSizeCaption
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              width: parent.width - textSizeControls.width - Style.space(16)
-              text: "Text size"
-              elide: Text.ElideRight
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: root.fs(Style.font.body)
-            }
-
-            Row {
-              id: textSizeControls
-              anchors.right: parent.right
-              anchors.rightMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(8)
-
-              PanelActionButton {
-                anchors.verticalCenter: parent.verticalCenter
-                // nf-fa-minus (U+F068)
-                iconText: "\uf068"
-                tooltipText: "Smaller"
-                enabled: root.textSizeIndex > 0
-                foreground: root.foreground
-                hoverColor: root.foreground
-                fontSize: root.fs(Style.font.bodySmall)
-                onClicked: root.stepTextSize(-1)
+              Rectangle {
+                anchors.fill: parent
+                radius: Style.space(6)
+                color: root.settingsSelected === root.sizeRow ? Qt.alpha(root.accent, 0.18) : "transparent"
               }
+              HoverHandler { onHoveredChanged: if (hovered) root.settingsSelected = root.sizeRow }
 
               Text {
+                id: textSizeCaption
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(Math.round(80 * root.textScale))
-                horizontalAlignment: Text.AlignHCenter
-                text: root.textSizeLabel
+                width: parent.width - textSizeControls.width - Style.space(16)
+                text: "Text size"
+                elide: Text.ElideRight
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: root.fs(Style.font.body)
               }
 
-              PanelActionButton {
+              Row {
+                id: textSizeControls
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-                // nf-fa-plus (U+F067)
-                iconText: "\uf067"
-                tooltipText: "Larger"
-                enabled: root.textSizeIndex < root.textSizeChoices.length - 1
-                foreground: root.foreground
-                hoverColor: root.foreground
-                fontSize: root.fs(Style.font.bodySmall)
-                onClicked: root.stepTextSize(1)
+                spacing: Style.space(8)
+
+                PanelActionButton {
+                  anchors.verticalCenter: parent.verticalCenter
+                  // nf-fa-minus (U+F068)
+                  iconText: "\uf068"
+                  tooltipText: "Smaller"
+                  enabled: root.textSizeIndex > 0
+                  foreground: root.foreground
+                  hoverColor: root.foreground
+                  fontSize: root.fs(Style.font.bodySmall)
+                  onClicked: root.stepTextSize(-1)
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(Math.round(80 * root.textScale))
+                  horizontalAlignment: Text.AlignHCenter
+                  text: root.textSizeLabel
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: root.fs(Style.font.body)
+                }
+
+                PanelActionButton {
+                  anchors.verticalCenter: parent.verticalCenter
+                  // nf-fa-plus (U+F067)
+                  iconText: "\uf067"
+                  tooltipText: "Larger"
+                  enabled: root.textSizeIndex < root.textSizeChoices.length - 1
+                  foreground: root.foreground
+                  hoverColor: root.foreground
+                  fontSize: root.fs(Style.font.bodySmall)
+                  onClicked: root.stepTextSize(1)
+                }
               }
             }
           }
@@ -1194,6 +1275,7 @@ Panel {
         // ---------------------------------------------------------- fight card
         Flickable {
           id: cardView
+          objectName: "body"
           visible: root.showCard
           width: parent.width
           height: visible ? Math.min(cardColumn.implicitHeight, root.bodyMaxHeight) : 0
@@ -1375,8 +1457,9 @@ Panel {
         }
 
         // ------------------------------------------------------------ footer
-        Row {
+        Flow {
           id: footer
+          width: parent.width
           spacing: Style.space(14)
           Text {
             visible: root.showSettings

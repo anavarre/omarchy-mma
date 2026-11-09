@@ -24,6 +24,9 @@ var eventLimitMax = 30
 // kept after merging, event sections read from one Wikipedia page, and names
 // waiting for a record lookup at any one time.
 var remoteEventMax = 60
+// Most raw events read from one scoreboard response, so a response padded with
+// thousands of events is never expanded into records.
+var scoreboardEventMax = 200
 var wikiSectionMax = 200
 var recordQueueBudget = 40
 // What the card cache keeps, in memory and on disk: the newest entries only.
@@ -463,7 +466,7 @@ function parseScoreboard(text, orgId) {
   if (!data || !Array.isArray(data.events)) return []
   var promo = promotionById(orgId)
   var out = []
-  data.events.forEach(function(e) {
+  data.events.slice(0, scoreboardEventMax).forEach(function(e) {
     if (!isObject(e)) return
     var comps = list(e.competitions).filter(isObject).slice(0, maxFightsPerEvent)
     var status = (e.status && e.status.type && e.status.type.name) || ""
@@ -517,12 +520,18 @@ function recentlyFinished(e, now, days) {
   return isFinite(over) && Number(now) - over < knownKeepDays(days) * 86400000
 }
 
-// What the list shows, in date order: every unfinished event, and finished
-// ones for `days` days after they ended.
+// What the list shows: finished events (for `days` days after they ended)
+// first, then every unfinished one, each group in date order. Grouping matters
+// because the panel puts a header at every change of group, and an unfinished
+// event with an old date (live, postponed, never marked final) would otherwise
+// split the list into several groups.
 function visibleEvents(events, now, days) {
-  return sortEvents(events.filter(function(e) {
+  var shown = sortEvents(events.filter(function(e) {
     return e.finished !== true || recentlyFinished(e, now, days)
   }))
+  var past = shown.filter(function(e) { return e.finished === true })
+  var upcoming = shown.filter(function(e) { return e.finished !== true })
+  return past.concat(upcoming)
 }
 
 // Lower-cased, accent-free text, so "jiri prochazka" finds "Jiří Procházka".
