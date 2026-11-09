@@ -277,9 +277,29 @@ Panel {
     f.contentY = Math.max(0, Math.min(Math.max(0, f.contentHeight - f.height), f.contentY))
   }
 
+  // The "Past events" / "Upcoming events" groups can be folded away.
+  property bool collapsedPast: false
+  property bool collapsedUpcoming: false
+  function isCollapsed(e) { return e.finished === true ? root.collapsedPast : root.collapsedUpcoming }
+  // Selectable: an event in an expanded group, or the "load more" row.
+  function selectable(i) {
+    return i === root.events.length ? root.hasMore : !root.isCollapsed(root.events[i])
+  }
+  function toggleGroup(finished) {
+    if (finished) root.collapsedPast = !root.collapsedPast
+    else root.collapsedUpcoming = !root.collapsedUpcoming
+    // Keep the selection on something visible.
+    var n = root.lastSelectable, i
+    if (n < 0 || root.selectable(root.selected)) return
+    for (i = root.selected; i <= n; i++) if (root.selectable(i)) { root.selected = i; return }
+    for (i = root.selected; i >= 0; i--) if (root.selectable(i)) { root.selected = i; return }
+  }
+
   function moveSelection(dy) {
     if (root.events.length === 0) return
-    root.selected = Math.max(0, Math.min(root.lastSelectable, root.selected + dy))
+    var step = dy < 0 ? -1 : 1, i = root.selected + step
+    while (i >= 0 && i <= root.lastSelectable && !root.selectable(i)) i += step
+    if (i >= 0 && i <= root.lastSelectable) root.selected = i
   }
 
   function openEvent(index) {
@@ -478,6 +498,8 @@ Panel {
         else if (text === "f" && !root.showCard) searchField.forceActiveFocus()
         else if (text === "g" && !root.showCard) root.cycleOrg()
         else if (text === "s") root.openSettings()
+        else if (text === "p" && !root.showCard) root.toggleGroup(true)
+        else if (text === "u" && !root.showCard) root.toggleGroup(false)
         else if (text === "r") {
           if (root.showCard) root.mma.refreshCard(root.eventId)
           else root.mma.hardRefresh()
@@ -663,9 +685,11 @@ Panel {
                 required property int index
                 required property var modelData
                 width: listColumn.width
-                height: row.y + row.height
+                readonly property bool folded: root.isCollapsed(entry.modelData)
+                height: row.y + (entry.folded ? 0 : row.height)
 
-                // "Past events" / "Upcoming events" above the first event of each.
+                // "Past events" / "Upcoming events" above the first event of each;
+                // click to fold or unfold the group.
                 Text {
                   id: sectionHeader
                   visible: entry.index === 0
@@ -674,15 +698,23 @@ Panel {
                   verticalAlignment: Text.AlignVCenter
                   leftPadding: Style.space(8)
                   textFormat: Text.PlainText
-                  text: (entry.modelData.finished === true ? "Past events" : "Upcoming events").toUpperCase()
+                  text: ((entry.folded ? "\u25b8 " : "\u25be ")
+                    + (entry.modelData.finished === true ? "Past events" : "Upcoming events")).toUpperCase()
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: root.fs(Style.font.bodySmall)
                   font.bold: true
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.toggleGroup(entry.modelData.finished === true)
+                  }
                 }
 
                 Rectangle {
                   id: row
+                  visible: !entry.folded
                   readonly property int index: entry.index
                   readonly property var modelData: entry.modelData
                   y: sectionHeader.visible ? sectionHeader.height : 0
