@@ -1229,7 +1229,9 @@ test("a refresh alone does not queue record lookups for every event", () => {
   const src = fs.readFileSync(__dirname + "/../Service.qml", "utf8");
   const body = src.slice(src.indexOf("function finishFetch"), src.indexOf("function merge"));
   assert.ok(!/events\.forEach\([^)]*loadCard/.test(body));
-  assert.strictEqual((body.match(/loadCard\(/g) || []).length, 1);
+  // The soonest event, and the card the panel has open (if any); never all of them.
+  assert.strictEqual((body.match(/loadCard\(/g) || []).length, 2);
+  assert.ok(/openCardId\s*!==\s*""\)\s*root\.loadCard\(root\.openCardId\)/.test(body));
 });
 
 test("the card cache keeps only the newest entries, on load too", () => {
