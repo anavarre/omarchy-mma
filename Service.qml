@@ -56,6 +56,8 @@ Item {
   property var segmentCache: ({})
   property var blockedAt: ({})
   property var recordTimes: ({})
+  // The segments each non-inline card was built from, to rebuild it with records.
+  property var cardSegments: ({})
   // When a real record stops being good: after the fighter's next fight.
   property var recordUntil: ({})
   // The selection the current event list was fetched for. The widget hands
@@ -110,6 +112,8 @@ Item {
     if (eventsProcess.running) return
     if (root.pending.length === 0) { root.finishFetch(); return }
     var org = root.pending[0]
+    // The official sites are slow and optional: show the base events first.
+    if (Model.officialBase(org) !== "") root.publishGathered()
     var promo = Model.promotionById(org)
     eventsProcess.org = org
     eventsProcess.generation = root.generation
@@ -117,8 +121,8 @@ Item {
     var days = Model.snapLookaheadDays(root.lookaheadDays)
     var back = root.keepFinishedDays + 1
     var provider = Model.providerOf(org)
-    eventsProcess.command = org === "pfl:site"
-      ? ["/usr/bin/bash", root.api, "pflsite"]
+    eventsProcess.command = Model.officialBase(org) !== ""
+      ? ["/usr/bin/bash", root.api, "official", Model.officialOf(Model.officialBase(org))]
       : provider === "wikipedia"
       ? ["/usr/bin/bash", root.api, "wiki", org].concat(Model.wikiYears(now, days, back))
       : provider === "ares"
@@ -127,6 +131,13 @@ Item {
           ? ["/usr/bin/bash", root.api, "sherdog", org, String(back)]
           : ["/usr/bin/bash", root.api, "events", promo.slug, Model.dateRange(now, days, back)]
     eventsProcess.running = true
+  }
+
+  // The events fetched so far, shown while the official sites are still being read.
+  function publishGathered() {
+    if (Object.keys(root.gathered).length === 0) return
+    root.byOrg = root.gathered
+    root.merge()
   }
 
   function finishFetch() {
@@ -162,7 +173,11 @@ Item {
     var lists = []
     for (var i = 0; i < selected.length; i++)
       if (root.byOrg[selected[i]]) lists.push(root.byOrg[selected[i]])
-    root.events = Model.mergeEvents(lists, Infinity, Date.now(), root.keepFinishedDays)
+    var merged = Model.mergeEvents(lists, Infinity, Date.now(), root.keepFinishedDays)
+    // Settled events are kept exactly as first seen, never replaced by a refetch.
+    var old = {}
+    root.events.forEach(function(e) { if (Model.eventSettled(e)) old[e.id] = e })
+    root.events = merged.map(function(e) { return old[e.id] || e })
   }
 
   function eventById(id) {
@@ -197,8 +212,9 @@ Item {
       return
     }
     var kept = root.segmentCache[id]
-    if (kept && Model.cardCacheFresh(kept.at, Date.now())) {
-      root.setCard(id, Model.buildCard(event, kept.data), "", true)
+    if (kept && (kept.final === true || Model.cardCacheFresh(kept.at, Date.now()))) {
+      root.setCard(id, Model.buildCard(Model.withRecords(event, root.liveRecords(), false), kept.data), "", true)
+      root.lookupOfficialRecords(event, kept.data)
       return
     }
     var next = {}
@@ -207,6 +223,17 @@ Item {
     root.cards = next
     cardQueue.push({ id: id, event: event })
     root.nextCard()
+  }
+
+  // Bouts only the official site lists (PFL's) come without a record, and the
+  // site has none to give: Sherdog is asked, as for an inline card. The card is
+  // already on screen; the records process rebuilds it when the answers come.
+  function lookupOfficialRecords(event, segments) {
+    if (event.inline === true || !event.fights.some(function(f) { return f.source })) return
+    var names = Model.namesNeedingRecords(event, root.liveRecords()).filter(function(n) { return !root.knownNa(n) })
+    root.cardSegments[event.id] = segments
+    root.setCard(event.id, Model.buildCard(Model.withRecords(event, root.liveRecords(), names.length === 0), segments), root.cardFor(event.id).error, true)
+    root.queueRecords(event, names)
   }
 
   // The records kept, minus those whose fighter has fought since.
@@ -231,7 +258,7 @@ Item {
     var job = root.cardQueue.shift()
     cardProcess.job = job
     // A "+" asks mma-api for how a finished fight was won.
-    // Bouts only the PFL site lists are not ESPN competitions to ask about.
+    // Bouts only the official site lists are not ESPN competitions to ask about.
     var ids = job.event.fights.filter(function(f) { return !f.source }).map(function(f) { return f.done ? f.id + "+" : f.id })
     cardProcess.command = ["/usr/bin/bash", root.api, "card", job.event.slug, job.event.id].concat(ids)
     cardProcess.running = true
@@ -292,14 +319,29 @@ Item {
   // however often the key is pressed.
   function hardRefresh() {
     if (!root.userRefresh()) return
-    root.segmentCache = ({})
-    root.recordTimes = ({})
-    root.recordUntil = ({})
-    var blocked = {}
-    for (var n in root.records) if (root.records[n] === "blocked" && root.blockedAt[n] !== undefined) blocked[n] = "blocked"
-    root.records = blocked
+    // Settled (finished) events keep their cards and fighters' records.
+    var seg = {}, recs = {}, times = {}, until = {}, cards = {}
+    root.events.forEach(function(e) {
+      if (!Model.eventSettled(e)) return
+      if (root.segmentCache[e.id]) seg[e.id] = root.segmentCache[e.id]
+      if (root.cards[e.id] && root.cards[e.id].done) cards[e.id] = root.cards[e.id]
+      ;(e.fights || []).forEach(function(f) {
+        ;(f.fighters || []).forEach(function(x) {
+          if (!x || !x.name || root.records[x.name] === undefined) return
+          recs[x.name] = root.records[x.name]
+          if (root.recordTimes[x.name] !== undefined) times[x.name] = root.recordTimes[x.name]
+          if (root.recordUntil[x.name] !== undefined) until[x.name] = root.recordUntil[x.name]
+        })
+      })
+    })
+    for (var n in root.records) if (root.records[n] === "blocked" && root.blockedAt[n] !== undefined) recs[n] = "blocked"
+    root.segmentCache = seg
+    root.recordTimes = times
+    root.recordUntil = until
+    root.records = recs
     root.recordQueue = []
     root.forgetCards()
+    root.cards = cards
     root.refresh()
     root.saveCache()
   }
@@ -311,7 +353,8 @@ Item {
     var event = root.eventById(id)
     // Its own, shorter limit: the 30 seconds of a full refresh would swallow a
     // second press without a sign of life. One card is a handful of requests.
-    if (!event || Date.now() - root.cardRefreshAt < 3000) return
+    // A settled event is final: its card is never fetched again.
+    if (!event || Model.eventSettled(event) || Date.now() - root.cardRefreshAt < 3000) return
     root.cardRefreshAt = Date.now()
     var seg = {}
     for (var k in root.segmentCache) if (k !== id) seg[k] = root.segmentCache[k]
@@ -371,14 +414,21 @@ Item {
       // A parser exception here would skip fetchNext and leave the service
       // loading for good, so a response that cannot be read counts as a failure.
       var error = ""
-      // The PFL site is a second opinion on ESPN's cards: when it does not
-      // answer, or cannot be read, ESPN's cards stand as they are, without an error.
-      if (eventsProcess.org === "pfl:site") {
+      // A promotion's own site is the source of truth for its cards, applied on
+      // top of the base source fetched just before. When it does not answer, or
+      // cannot be read, the base source's cards stand, without an error.
+      var officialFor = Model.officialBase(eventsProcess.org)
+      if (officialFor !== "") {
         try {
           var gp = root.gathered
-          if (exitCode === 0 && gp.pfl && eventsOut.text.length <= Model.maxResponseChars)
-            gp.pfl = Model.applyPflSite(gp.pfl, eventsOut.text)
+          if (exitCode === 0 && gp[officialFor] && eventsOut.text.length <= Model.maxResponseChars) {
+            gp[officialFor] = Model.applyOfficial(officialFor, gp[officialFor], eventsOut.text)
+            gp[officialFor].forEach(function(e) {
+              if (e.officialDiff) console.log("mma official", officialFor, e.name, "dropped:", JSON.stringify(e.officialDiff.dropped), "added:", JSON.stringify(e.officialDiff.added))
+            })
+          }
           root.gathered = gp
+          root.publishGathered()
         } catch (e) { }
         Qt.callLater(root.fetchNext)
         return
@@ -439,9 +489,12 @@ Item {
           ok = false
         }
         root.setCard(job.id, sections, ok ? "" : "Card order is estimated from start times.", ok)
+        root.lookupOfficialRecords(job.event, ok ? segments : ({}))
         if (ok) {
           var kept = root.segmentCache
           kept[job.id] = { at: Date.now(), data: segments }
+          // A settled event's card is never fetched or expired again.
+          if (Model.eventSettled(job.event)) kept[job.id].final = true
           root.segmentCache = Model.newestEntries(kept, Model.cacheSegmentMax, function(k, v) { return v.at })
           root.saveCache()
         }
@@ -497,7 +550,7 @@ Item {
           // Only cards still there: a refresh may have dropped them.
           job.events.forEach(function(e) {
             var card = root.cards[e.id]
-            if (card && card.done) root.setCard(e.id, Model.buildCard(Model.withRecords(e, all, true), {}), "", true)
+            if (card && card.done) root.setCard(e.id, Model.buildCard(Model.withRecords(e, all, true), e.inline === true ? {} : (root.cardSegments[e.id] || {})), card.error, true)
           })
         } catch (e) {}
       }

@@ -36,13 +36,17 @@
 #       One JSON object: {"org": html, "events": {path: html}}. Model.js reads
 #       the HTML. It exits 1 when the organization page did not come through.
 #
-#   mma-api pflsite
-#       ESPN's PFL cards lag the promotion's own, so the upcoming events of
-#       pflmma.com are read as a second opinion: the /events listing, then the
+#   mma-api official <pfl|ufc>
+#       A base source's cards (ESPN's...) can lag the promotion's own site, which
+#       is the source of truth for which bouts are on a card. For PFL, the
+#       upcoming events of pflmma.com are read: the /events listing, then the
 #       page of each upcoming event (the ones it links as "MATCHUPS", at most
 #       MAX_PFL_UPCOMING). Each page carries schema.org JSON-LD with one entry per
-#       bout. One JSON object: {"events": {path: html}}. Model.js reads it
-#       (applyPflSite). robots.txt allows these pages. It exits 1 when the
+#       bout. For UFC, ufc.com's /events listing and the pages of its first
+#       MAX_UFC_UPCOMING events (HTML without structured data; its robots.txt
+#       asks for a 15 second crawl-delay, kept between requests). One JSON
+#       object: {"events": {path: html}}. Model.js reads it
+#       (applyOfficial). robots.txt allows these pages. It exits 1 when the
 #       listing did not come through.
 #
 #   mma-api records <name>...
@@ -54,7 +58,7 @@
 #       namesake gets "n/a" rather than someone else's record. It exits 1 when
 #       every name came back "blocked".
 #
-# MMA_SITE_BASE, MMA_CORE_BASE, MMA_WIKI_API, MMA_ARES_BASE, MMA_SHERDOG_BASE and MMA_PFL_BASE override the endpoints for running the
+# MMA_SITE_BASE, MMA_CORE_BASE, MMA_WIKI_API, MMA_ARES_BASE, MMA_SHERDOG_BASE and MMA_PFL_BASE and MMA_UFC_BASE override the endpoints for running the
 # script by hand. They must be https: curl refuses every other scheme, and
 # Service.qml does not pass them through from the shell's environment.
 set -u -o pipefail
@@ -65,6 +69,7 @@ WIKI_API=${MMA_WIKI_API:-https://en.wikipedia.org/w/api.php}
 SHERDOG_BASE=${MMA_SHERDOG_BASE:-https://www.sherdog.com}
 ARES_BASE=${MMA_ARES_BASE:-https://www.aresfighting.com}
 PFL_BASE=${MMA_PFL_BASE:-https://pflmma.com}
+UFC_BASE=${MMA_UFC_BASE:-https://www.ufc.com}
 # Wikimedia asks API clients to say who they are.
 WIKI_UA="omarchy-mma (https://github.com/anavarre/omarchy-mma)"
 # Concurrent requests to ESPN's API, and to the HTML sites (ARES, Sherdog),
@@ -80,6 +85,13 @@ MAX_ARES_PAST=6
 MAX_SHERDOG_UPCOMING=8
 MAX_SHERDOG_PAST=6
 MAX_PFL_UPCOMING=8
+# ufc.com asks for 15 seconds between requests; two events keep a refresh near
+# half a minute.
+MAX_UFC_UPCOMING=2
+UFC_CRAWL_DELAY=${MMA_UFC_CRAWL_DELAY:-15}
+# ufc.com picks the page language from the visitor's region (French from some
+# countries); this is its own language preference, so every page comes in English.
+UFC_COOKIE="STYXKEY_region=ENGLISH.US.en.Default"
 # Size caps per answer, each well over ten times the largest seen (ESPN's
 # scoreboard ~100 KB, a competition ~20 KB, a year page's wikitext ~350 KB, an
 # event page ~110 KB), and the cap on what one command prints in all: the
@@ -91,17 +103,20 @@ MAX_BYTES_WIKI=4194304
 MAX_BYTES_HTML=2097152
 TOTAL_MAX=8388608
 
-# fetch <url> [user-agent] [max-bytes]
+# fetch <url> [user-agent] [max-bytes] [cookie]
 # --max-filesize only works when the server announces a length, so the body is
 # also cut at the limit: head stops reading, curl fails on the closed pipe and
 # pipefail makes that the function's status. The truncated output is then
 # ignored: Service.qml reads stdout only on exit 0, and `card` deletes the file.
-# Redirects are followed, but only to https and only a few.
+# Redirects are followed, but only to https and only a few. The optional cookie
+# is sent as given (ufc.com's language preference).
 fetch() {
   local max=${3:-$MAX_BYTES_HTML}
+  local extra=()
+  [ -n "${4:-}" ] && extra=(-H "Cookie: $4")
   curl -fsS --proto '=https' -L --max-redirs 3 --proto-redir '=https' \
     --max-filesize "$max" --max-time 20 --retry 1 \
-    -A "${2:-omarchy-mma}" "$1" | head -c "$max"
+    -A "${2:-omarchy-mma}" "${extra[@]}" "$1" | head -c "$max"
 }
 
 # Whether the file named still fits the command's output budget; when it does,
@@ -357,10 +372,26 @@ case "$cmd" in
     done
     printf '}}'
     ;;
-  pflsite)
-    [ $# -eq 0 ] || die "usage: pflsite"
+  official)
+    [ $# -eq 1 ] && { [ "$1" = "pfl" ] || [ "$1" = "ufc" ]; } || die "usage: official <pfl|ufc>"
     tmp=$(mktemp -d) || exit 1
     trap 'rm -rf "$tmp"' EXIT
+    if [ "$1" = "ufc" ]; then
+      fetch "$UFC_BASE/events" "$WIKI_UA" "" "$UFC_COOKIE" > "$tmp/list" 2> /dev/null && [ -s "$tmp/list" ] || exit 1
+      # Upcoming events come first in the listing, soonest first.
+      paths=$(tr '\n\r' '  ' < "$tmp/list" | grep -oE 'href="/event/[a-z0-9-]+"' \
+        | sed -E 's|href="([^"]*)"|\1|' | awk '!seen[$0]++' | head -n "$MAX_UFC_UPCOMING")
+      printf '{"events":{'
+      sep=""
+      for path in $paths; do
+        sleep "$UFC_CRAWL_DELAY"
+        fetch "$UFC_BASE$path" "$WIKI_UA" "" "$UFC_COOKIE" > "$tmp/event" 2> /dev/null && [ -s "$tmp/event" ] && fits "$tmp/event" || continue
+        printf '%s"%s":' "$sep" "$path"; jstr < "$tmp/event"
+        sep=","
+      done
+      printf '}}'
+      exit 0
+    fi
     fetch "$PFL_BASE/events" "$WIKI_UA" > "$tmp/list" 2> /dev/null && [ -s "$tmp/list" ] || exit 1
     # Upcoming events are the ones whose button reads MATCHUPS (past ones say
     # VIEW RESULTS); the listing shows each of them twice.
@@ -414,6 +445,6 @@ case "$cmd" in
     [ "$ok" -eq 1 ] || exit 1
     ;;
   *)
-    die "usage: mma-api events|card|wiki|ares|sherdog|pflsite|records ..."
+    die "usage: mma-api events|card|wiki|ares|sherdog|official|records ..."
     ;;
 esac

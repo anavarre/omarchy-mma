@@ -1071,6 +1071,17 @@ test("card cache keeps fresh, well-formed entries only", () => {
   assert.strictEqual(M.cardCacheFresh(now + 1000, now), false);
 });
 
+test("a settled past event is final: its cached card never expires", () => {
+  const now = 10 * 24 * 3600 * 1000;
+  const old = now - 30 * 24 * 3600 * 1000;
+  const seg = { "401": { segment: "main", label: "Main Card", matchNumber: 1, champion: false, method: "KO" } };
+  const text = M.serializeCardCache({ "123": { at: old, data: seg, final: true }, "124": { at: old, data: seg } }, {});
+  assert.deepStrictEqual(Object.keys(M.parseCardCache(text, now).segments), ["123"]);
+  assert.strictEqual(M.eventSettled({ finished: true, fights: [{ done: true }] }), true);
+  assert.strictEqual(M.eventSettled({ finished: true, fights: [{ done: false }] }), false);
+  assert.strictEqual(M.eventSettled({ finished: false, fights: [{ done: true }] }), false);
+});
+
 test("card cache rebuilds each entry field by field", () => {
   const now = 10 * 24 * 3600 * 1000;
   const at = now - 1000;
@@ -1413,9 +1424,9 @@ test("parsePflSite reads the bouts from the page's JSON-LD", () => {
   assert.strictEqual(lyon.fights[0].weightClass, "Bantamweight");
 });
 
-test("applyPflSite makes ESPN's upcoming bouts match the official site's card", () => {
+test("applyOfficial makes ESPN's upcoming bouts match the official site's card", () => {
   assert.strictEqual(pflEspn[0].fights.length, 8);
-  const [lyon] = M.applyPflSite(pflEspn, pflSitePages);
+  const [lyon] = M.applyOfficial("pfl", pflEspn, pflSitePages);
   const names = lyonNames(lyon);
   // The site's nine bouts: ESPN's seven matching ones plus Tandia and Garnett.
   assert.strictEqual(lyon.fights.length, 9);
@@ -1426,8 +1437,10 @@ test("applyPflSite makes ESPN's upcoming bouts match the official site's card", 
   assert.ok(!names.some((n) => /Gittins/.test(n)));
   // Same bouts under different spellings are neither dropped nor added twice.
   assert.strictEqual(names.filter((n) => /Chipito|Atangana|Lapilus/.test(n)).length, 3);
-  assert.strictEqual(lyon.fights.filter((f) => f.source === "pfl-site").length, 2);
+  assert.strictEqual(lyon.fights.filter((f) => f.source === "official").length, 2);
   // ESPN's data is kept for the bouts both list.
+  assert.deepStrictEqual(lyon.officialDiff.added.sort(), ["Dean Garnett vs Bryce Meredith", "Oualy Tandia vs Alex Lohoré"]);
+  assert.strictEqual(lyon.officialDiff.dropped.length, 1);
   assert.ok(lyon.fights.filter((f) => !f.source).every((f) => /^\d+$/.test(f.id)));
 });
 
@@ -1436,46 +1449,51 @@ test("a replacement opponent on the site replaces ESPN's bout", () => {
   const f = swapped[0].fights.find((x) => x.fighters.some((y) => /Meskini/.test(y.name)));
   f.fighters[0].name = "Adam Meskini";
   f.fighters[1].name = "Someone Else";
-  const [lyon] = M.applyPflSite(swapped, pflSitePages);
+  const [lyon] = M.applyOfficial("pfl", swapped, pflSitePages);
   const names = lyonNames(lyon);
   assert.ok(!names.some((n) => /Someone Else/.test(n)));
   assert.ok(names.some((n) => /Meskini/.test(n) && /Brachet/.test(n)));
 });
 
-test("applyPflSite keeps a finished bout and the headliner", () => {
+test("applyOfficial keeps a finished bout and the headliner", () => {
   const finished = JSON.parse(JSON.stringify(pflEspn));
   const g = finished[0].fights.find((x) => x.fighters.some((y) => /Gittins/.test(y.name)));
   g.done = true;
-  const [lyon] = M.applyPflSite(finished, pflSitePages);
+  const [lyon] = M.applyOfficial("pfl", finished, pflSitePages);
   assert.ok(lyonNames(lyon).some((n) => /Gittins/.test(n)));
   assert.ok(lyon.headliner);
 });
 
-test("applyPflSite leaves events alone when the site is unreadable, unmatched, empty or finished", () => {
-  assert.deepStrictEqual(M.applyPflSite(pflEspn, "garbage"), pflEspn);
-  assert.deepStrictEqual(M.applyPflSite(pflEspn, JSON.stringify({ events: {} })), pflEspn);
+test("applyOfficial leaves events alone when the site is unreadable, unmatched, empty or finished", () => {
+  assert.deepStrictEqual(M.applyOfficial("pfl", pflEspn, "garbage"), pflEspn);
+  assert.deepStrictEqual(M.applyOfficial("pfl", pflEspn, JSON.stringify({ events: {} })), pflEspn);
   const far = pflEspn.map((e) => Object.assign({}, e, { date: "2026-12-01T20:00Z" }));
-  assert.deepStrictEqual(M.applyPflSite(far, pflSitePages), far);
+  assert.deepStrictEqual(M.applyOfficial("pfl", far, pflSitePages), far);
   const done = pflEspn.map((e) => Object.assign({}, e, { finished: true }));
-  assert.deepStrictEqual(M.applyPflSite(done, pflSitePages), done);
+  assert.deepStrictEqual(M.applyOfficial("pfl", done, pflSitePages), done);
   // Paired by date but with no bout in common: not trusted to rule.
   const other = JSON.parse(JSON.stringify(pflEspn));
   other[0].fights.forEach((f, i) => { f.fighters[0].name = "A" + i + " Nobody" + i; f.fighters[1].name = "B" + i + " Anyone" + i; });
-  assert.deepStrictEqual(M.applyPflSite(other, pflSitePages), other);
+  assert.deepStrictEqual(M.applyOfficial("pfl", other, pflSitePages), other);
 });
 
 test("a bout from the site joins the section of the ESPN bouts that start with it", () => {
-  const [lyon] = M.applyPflSite(pflEspn, pflSitePages);
+  const [lyon] = M.applyOfficial("pfl", pflEspn, pflSitePages);
   const sections = M.buildCard(lyon, {});
   const main = sections.find((s) => s.key === "main");
   assert.ok(main.fights.some((f) => f.fighters[0].name === "Oualy Tandia"));
   // ...and sorts after the bouts ESPN ranks.
-  assert.strictEqual(main.fights[main.fights.length - 1].source, "pfl-site");
+  assert.strictEqual(main.fights[main.fights.length - 1].source, "official");
 });
 
-test("fetchPlan queues the PFL site right after PFL", () => {
-  assert.deepStrictEqual(M.fetchPlan(["ufc", "pfl", "cw"]), ["ufc", "pfl", "pfl:site", "cw"]);
-  assert.deepStrictEqual(M.fetchPlan(["ufc"]), ["ufc"]);
+test("fetchPlan queues a promotion's official site right after the promotion", () => {
+  assert.deepStrictEqual(M.fetchPlan(["ufc", "pfl", "cw"]), ["ufc", "pfl", "cw", "ufc:official", "pfl:official"]);
+  assert.strictEqual(M.officialBase("pfl:official"), "pfl");
+  assert.strictEqual(M.officialBase("ufc:official"), "ufc");
+  assert.strictEqual(M.officialBase("cw:official"), "");
+  assert.strictEqual(M.officialBase("pfl"), "");
+  assert.deepStrictEqual(M.fetchPlan(["ufc"]), ["ufc", "ufc:official"]);
+  assert.deepStrictEqual(M.fetchPlan(["cw"]), ["cw"]);
 });
 
 test("a hostile PFL page is read in bounded time", () => {
@@ -1483,4 +1501,89 @@ test("a hostile PFL page is read in bounded time", () => {
   const t = Date.now();
   assert.deepStrictEqual(M.parsePflSite(JSON.stringify({ events: { "/event/x": junk } })), []);
   assert.ok(Date.now() - t < 1000);
+});
+
+// ------------------------------------------------------------ UFC's own site
+const ufcSitePages = JSON.stringify({ events: { "/event/ufc-334": fixture("ufc-334-site.html") } });
+
+test("parseUfcSite reads the bouts, their start times and the event's date", () => {
+  const [e] = M.parseUfcSite(ufcSitePages);
+  assert.strictEqual(e.date, "2026-11-14T22:00Z");
+  assert.strictEqual(e.fights.length, 13);
+  assert.deepStrictEqual(e.fights[0].fighters.map((f) => f.name), ["Ciryl Gane", "Josh Hokit"]);
+  assert.strictEqual(e.fights[0].startDate, "2026-11-15T02:00Z");
+  assert.deepStrictEqual([...new Set(e.fights.map((f) => f.startDate))].sort(),
+    ["2026-11-14T22:00Z", "2026-11-15T00:00Z", "2026-11-15T02:00Z"]);
+  assert.deepStrictEqual(e.fights.slice(0, 3).map((f) => f.weightClass), ["Heavyweight", "Women's Bantamweight", "Middleweight"]);
+  // A fighter whose name is plain text in the link, not two spans.
+  assert.ok(e.fights.some((f) => f.fighters[0].name === "Uroš Medić" && f.fighters[1].name === "Kevin Holland"));
+});
+
+test("applyOfficial drops a UFC bout ufc.com no longer lists and keeps the rest", () => {
+  const ev = M.applyOfficial("ufc", ufc, ufcSitePages);
+  const e = byName(ev, "UFC 334");
+  assert.strictEqual(e.fights.length, 13);
+  assert.deepStrictEqual(e.officialDiff.dropped, ["Nazim Sadykhov vs Jefferson Nascimento"]);
+  assert.deepStrictEqual(e.officialDiff.added, []);
+  // Accents differ between the two ("Yañez"/"Yanez"), and nothing else is touched.
+  assert.ok(e.fights.every((f) => !f.source));
+  assert.strictEqual(byName(ev, "Moicano").fights.length, 12);
+  assert.strictEqual(byName(ev, "Moicano").officialDiff, undefined);
+});
+
+test("generational suffixes do not make two different fighters the same", () => {
+  assert.strictEqual(M.sameFighter("Carlos Diego Ferreira", "Diego Ferreira"), true);
+  assert.strictEqual(M.sameFighter("Bill Algeo Jr.", "Tim Means Jr"), false);
+  assert.strictEqual(M.sameFighter("Bill Algeo Jr.", "Bill Algeo"), true);
+});
+
+test("a hostile UFC page is read in bounded time", () => {
+  const junk = 'id="main-card" data-timestamp="1" class="c-listing-fight" data-fmid=1 '.repeat(20000);
+  const t = Date.now();
+  M.parseUfcSite(JSON.stringify({ events: { "/event/x": junk } }));
+  assert.ok(Date.now() - t < 2000);
+});
+
+test("a UFC page that comes back in another language is never shown in it", () => {
+  const french = fixture("ufc-334-site.html")
+    .replace('<html lang="en"', '<html lang="fr"')
+    .replace(/Heavyweight Title Bout/g, "Heavyweight Combat de championnat");
+  const [e] = M.parseUfcSite(JSON.stringify({ events: { "/event/ufc-334": french } }));
+  assert.strictEqual(e.fights.length, 13);
+  assert.ok(e.fights.every((f) => f.weightClass === ""));
+});
+
+test("bin/mma-api asks ufc.com for English on every request", () => {
+  const api = fs.readFileSync(__dirname + "/../bin/mma-api", "utf8");
+  assert.ok(/^UFC_COOKIE="STYXKEY_region=ENGLISH\.US\.en\.Default"$/m.test(api));
+  assert.strictEqual((api.match(/fetch "\$UFC_BASE[^\n]*"\$UFC_COOKIE"/g) || []).length, 2, "the listing and the event pages");
+});
+
+test("bouts added from the official site survive the cache", () => {
+  const bout = { id: "official-pfl-1680", weightClass: "Welterweight", startDate: "2026-12-19T20:00Z", status: "STATUS_SCHEDULED", done: false,
+    fighters: [{ name: "Oualy Tandia" }, { name: "Alex Lohoré" }], source: "official" };
+  const ev = { id: "600001", org: "pfl", name: "PFL Lyon", date: "2026-12-19T16:00Z", fights: [bout] };
+  const back = M.parseCache(M.serializeCache([ev], 1)).events[0];
+  assert.strictEqual(back.fights.length, 1);
+  assert.strictEqual(back.fights[0].id, "official-pfl-1680");
+  assert.strictEqual(back.fights[0].source, "official");
+  assert.strictEqual(M.sanitizeFight({ ...bout, id: "official-../x" }), null);
+});
+
+test("official-only bouts on an ESPN card get a Sherdog record lookup, ESPN's own do not", () => {
+  const fighter = (name, record = "") => ({ name, shortName: name, record, country: "", winner: false, tba: false });
+  const event = {
+    id: "1", inline: false,
+    fights: [
+      { id: "10", fighters: [fighter("Ann Alpha", "5-0-0"), fighter("Bea Beta")] },
+      { id: "official-pfl-9", source: "official", fighters: [fighter("Cat Gamma"), fighter("Dee Delta", "3-1-0")] },
+    ],
+  };
+  assert.deepStrictEqual(M.namesNeedingRecords(event, {}), ["Cat Gamma"]);
+  const pending = M.withRecords(event, {}, false);
+  assert.strictEqual(pending.fights[1].fighters[0].recordPending, true);
+  assert.strictEqual(pending.fights[0].fighters[1].recordPending, false);
+  const done = M.withRecords(event, { "Cat Gamma": "7-2-0" }, true);
+  assert.strictEqual(done.fights[1].fighters[0].record, "7-2-0");
+  assert.strictEqual(M.withRecords(event, { "Cat Gamma": "n/a" }, true).fights[1].fighters[0].recordMissing, "na");
 });

@@ -62,26 +62,37 @@ ESPN's public JSON API. It needs no key, but it is unofficial and could change.
 - Fighter `order` 1 is the champion or higher-billed fighter and 2 is the
   challenger. ESPN lists them in no fixed order, so the plugin sorts by it.
 
-### PFL: ESPN, with pflmma.com as the source of truth
+### The official site wins: PFL and UFC
 
-ESPN's PFL cards can lag the promotion's own (a late addition may be on
-[pflmma.com](https://pflmma.com/events) days before ESPN lists it), and a bout that was
-pulled can linger on ESPN. The official site is the source of truth for which bouts are
-on a card, so the upcoming events of the site are read (`bin/mma-api pflsite`; each
-event page carries schema.org JSON-LD, one entry per bout, and its `robots.txt` allows
-these pages) and ESPN's cards are made to match:
+A base source (ESPN, Wikipedia) can lag the promotion's own site: a late addition may be
+on the site days before the base lists it, and a pulled bout can linger there. For a
+promotion that has an `official` entry in `Model.js`, its own site is the source of truth
+for which bouts are on a card, and the base card is made to match. PFL is the first
+([pflmma.com](https://pflmma.com/events): each event page carries schema.org JSON-LD, one
+entry per bout, and its `robots.txt` allows these pages; `bin/mma-api official pfl`) and UFC
+([ufc.com](https://www.ufc.com/events): no structured data, so the event pages' HTML is read,
+`bin/mma-api official ufc`). ufc.com's `robots.txt` asks for 15 seconds between requests, which
+is kept, so only its next two events are read and that fetch takes about half a minute; the
+ESPN events are shown first and corrected when it finishes. ufc.com picks the page's language
+from the visitor's region (French from some countries), so requests carry its own English
+language preference; a page that still comes back in another language has its weight classes
+dropped rather than shown.
 
-- A bout the site lists and ESPN does not is added. It has no ESPN segment, so it joins
-  the section whose bouts start at the same time, after the ones ESPN ranks.
-- A bout ESPN lists and the site does not is dropped. A replacement opponent therefore
-  shows the site's version.
-- ESPN still supplies everything the site lacks (ids, segments, records, results) for
-  the bouts both list. A bout that is already finished stays, since results are ESPN's.
+- A bout the site lists and the base does not is added. It has no segment of its own, so
+  it joins the section whose bouts start at the same time, after the ones the base ranks.
+- A bout the base lists and the site does not is dropped. A replacement opponent therefore
+  shows the site's version. Every change is logged (`mma official <org> <event> dropped:
+  ... added: ...`), so nothing disappears silently.
+- The base still supplies everything the site lacks (ids, segments, records, results) for
+  the bouts both list. A bout that is already finished stays, since results are the base's.
 - Bouts are matched by fighters' last names, accents ignored, in either order.
-- Safeguards: the site only rules when at least one of its bouts matches an ESPN bout
+- Safeguards: the site only rules when at least one of its bouts matches a base bout
   (otherwise the events were probably paired by date alone), an empty site card changes
-  nothing, and only events ESPN already lists are touched. If the site does not answer or
-  cannot be read, ESPN's cards stand, without an error.
+  nothing, and only events the base already lists are touched. If the site does not answer
+  or cannot be read, the base cards stand, without an error.
+
+Adding a promotion means a parser for its site (`officialParsers` in `Model.js`), a branch
+in `bin/mma-api official`, and `official: "<id>"` on its entry. The rules above then apply as is.
 
 ### Cage Warriors, KSW, Oktagon, ACA and ONE: Wikipedia
 

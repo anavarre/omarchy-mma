@@ -5,9 +5,10 @@
 
 // Promotions the settings pane offers. `enabled` ones have a data provider:
 // "espn" (the default), "wikipedia" (see parseWikipedia), "ares" (parseAres) or "sherdog" (parseSherdog).
+// `official` names the promotion's own site as the source of truth for its cards (see applyOfficial).
 var promotions = [
-  { id: "ufc", label: "UFC", slug: "ufc", enabled: true, logo: "assets/ufc.png", description: "Ultimate Fighting Championship" },
-  { id: "pfl", label: "PFL", slug: "pfl", enabled: true, logo: "assets/pfl.png", description: "Professional Fighters League" },
+  { id: "ufc", label: "UFC", slug: "ufc", official: "ufc", enabled: true, logo: "assets/ufc.png", description: "Ultimate Fighting Championship" },
+  { id: "pfl", label: "PFL", slug: "pfl", official: "pfl", enabled: true, logo: "assets/pfl.png", description: "Professional Fighters League" },
   { id: "cw", experimental: true, label: "Cage Warriors", slug: "cage-warriors", enabled: true, logo: "assets/cw.png", tag: "CW", provider: "wikipedia", wikiPage: "Cage_Warriors", idBase: 8000000, description: "Cage Warriors Fighting Championship" },
   { id: "ksw", experimental: true, label: "KSW", slug: "ksw", enabled: true, logo: "assets/ksw.png", tag: "KSW", provider: "wikipedia", wikiPage: "Konfrontacja_Sztuk_Walki", idBase: 8300000, description: "Konfrontacja Sztuk Walki" },
   { id: "ares", experimental: true, label: "ARES", slug: "ares", enabled: true, logo: "assets/ares.png", tag: "ARES", provider: "ares", idBase: 8600000, description: "ARES Fighting Championship" },
@@ -824,6 +825,9 @@ function namesNeedingRecords(event, known) {
   list(event && event.fights).forEach(function(f) {
     list(f.fighters).forEach(function(x) {
       if (!x || x.tba || x.record || !x.name || seen[x.name] || (known && recordShape.test(str(known[x.name])))) return
+      // On a card that is not inline (ESPN's) only the bouts the official site
+      // added lack a record: ESPN's own bouts are none of Sherdog's business.
+      if (event.inline !== true && f.source !== officialSource) return
       seen[x.name] = true
       names.push(x.name)
     })
@@ -845,7 +849,7 @@ function withRecords(event, records, settled) {
       var h = {}
       for (var k3 in x) h[k3] = x[k3]
       if (!h.record && Object.prototype.hasOwnProperty.call(records, h.name) && recordShape.test(str(records[h.name]))) h.record = records[h.name]
-      var wanted = event.inline === true && !h.record && !h.tba
+      var wanted = (event.inline === true || f.source === officialSource) && !h.record && !h.tba
       h.recordMissing = wanted && settled === true ? (records[h.name] === "n/a" ? "na" : "blocked") : ""
       h.recordPending = wanted && settled !== true
       return h
@@ -1487,6 +1491,12 @@ function whenText(e, format, zoneId) {
 
 var cardCacheMs = 12 * 60 * 60 * 1000
 
+// A finished event whose every fight is decided never changes again (fighters,
+// score, finish method): nothing about it is refreshed, expired or replaced.
+function eventSettled(e) {
+  return !!e && e.finished === true && list(e.fights).every(function(f) { return f && f.done !== false })
+}
+
 function cardCacheFresh(at, now) {
   var age = now - Number(at)
   return isFinite(age) && age >= 0 && age < cardCacheMs
@@ -1554,7 +1564,8 @@ function parseCardCache(text, now) {
   var segs = isObject(data.segments) ? data.segments : ({})
   Object.keys(segs).forEach(function(id) {
     var e = segs[id]
-    if (!isId(id) || !isObject(e) || !isObject(e.data) || !cardCacheFresh(e.at, now)) return
+    if (!isId(id) || !isObject(e) || !isObject(e.data)) return
+    if (e.final !== true && !cardCacheFresh(e.at, now)) return
     var clean = ({})
     Object.keys(e.data).forEach(function(cid) {
       var c = e.data[cid]
@@ -1568,6 +1579,7 @@ function parseCardCache(text, now) {
       }
     })
     if (Object.keys(clean).length > 0) out.segments[id] = { at: Number(e.at), data: clean }
+    if (e.final === true && out.segments[id]) out.segments[id].final = true
   })
   out.segments = newestEntries(out.segments, cacheSegmentMax, function(k, v) { return v.at })
   var recs = isObject(data.records) ? data.records : ({})
@@ -1615,12 +1627,15 @@ function sanitizeFighter(x) {
   }
 }
 
+// ESPN's ids are numbers; a bout only the official site lists has "official-<site id>".
+function isFightId(v) { return isId(v) || /^official-[a-z]{1,8}-[A-Za-z0-9]{1,20}$/.test(String(v)) }
+
 function sanitizeFight(f) {
-  if (!f || typeof f !== "object" || !isId(f.id)) return null
+  if (!f || typeof f !== "object" || !isFightId(f.id)) return null
   var fighters = Array.isArray(f.fighters) ? f.fighters.slice(0, 2).map(sanitizeFighter) : []
   while (fighters.length < 2) fighters.push(sanitizeFighter(null))
   var rounds = Number(f.rounds)
-  return {
+  var out = {
     id: String(f.id),
     weightClass: str(f.weightClass),
     rounds: isFinite(rounds) && rounds > 0 ? Math.floor(rounds) : 0,
@@ -1635,6 +1650,8 @@ function sanitizeFight(f) {
     champion: f.champion === true,
     method: str(f.method).slice(0, 80)
   }
+  if (f.source === officialSource) out.source = officialSource
+  return out
 }
 
 function sanitizeEvent(e) {
@@ -1696,30 +1713,43 @@ function errorMessage(stderr, exitCode) {
   return s !== "" ? s : "Request failed (" + exitCode + ")"
 }
 
-// ------------------------------------------------------------ PFL's own site
-// ESPN's PFL cards lag the promotion's: a late addition can be on pflmma.com
+// ------------------------------------------------------- the official site
+// A base source's cards (ESPN's, Wikipedia's...) can lag the promotion's: a late addition can be on pflmma.com
 // for days before ESPN lists it, and a bout that was pulled can linger on ESPN.
-// pflmma.com's event pages carry schema.org JSON-LD, one SportsEvent per bout,
-// which is what is read here. The official site is the source of truth for
-// which bouts are on a card; ESPN supplies what the site lacks (ids, segments,
+// A promotion with an `official` entry has its own site read as well (bin/mma-api
+// official <org>), through a parser in officialParsers, and that site is the
+// source of truth for which bouts are on a card; the base supplies what the site lacks (ids, segments,
 // records, results). So for an upcoming event the site matches: a bout ESPN
 // lists that the site does not is dropped, and a bout only the site lists is
 // added. Safeguards: a bout already finished is ESPN's and stays; the site only
 // rules when at least one of its bouts matches an ESPN bout (otherwise the two
 // events were probably paired by date alone); an empty site card changes nothing.
 
-var pflSiteSource = "pfl-site"
-var pflSiteEventMax = 12
-var pflSiteMatchMs = 36 * 3600 * 1000
+var officialSource = "official"
+var officialEventMax = 12
+var officialMatchMs = 36 * 3600 * 1000
 
-// The fetch plan: the pseudo-organization "pfl:site" runs right after "pfl".
+// The fetch plan: every base source first, then the pseudo-organizations
+// "<id>:official" of those with an official site. The official fetches can be
+// slow (ufc.com asks for 15 seconds between requests), and Service.qml shows
+// the base events before the first of them starts.
 function fetchPlan(wanted) {
-  var out = []
+  var out = list(wanted).slice()
   list(wanted).forEach(function(o) {
-    out.push(o)
-    if (o === "pfl") out.push("pfl:site")
+    if (officialOf(o) !== "") out.push(o + ":official")
   })
   return out
+}
+
+function officialOf(orgId) {
+  var p = promotionById(orgId)
+  return p && p.official && officialParsers[p.official] ? p.official : ""
+}
+
+// The base organization of a "<id>:official" pseudo-organization, or "".
+function officialBase(pseudo) {
+  var m = /^([a-z0-9]+):official$/.exec(String(pseudo))
+  return m && officialOf(m[1]) !== "" ? m[1] : ""
 }
 
 // Lowercase, accents and punctuation gone: "Alex Lohoré" -> "alex lohore".
@@ -1732,10 +1762,14 @@ function foldName(s) {
 // Two spellings of a fighter match when their last words do: ESPN has "Boris
 // Mbarga Atangana" where the site has "Boris Atangana", and "Shelda Chipito"
 // where the site has "Miracle Chipito".
+function lastWord(name) {
+  var w = foldName(name).split(" ").filter(function(x) { return !/^(jr|sr|ii|iii|iv)$/.test(x) })
+  return w.length > 0 ? w[w.length - 1] : ""
+}
+
 function sameFighter(a, b) {
-  var x = foldName(a).split(" "), y = foldName(b).split(" ")
-  var lx = x[x.length - 1], ly = y[y.length - 1]
-  return lx !== "" && lx === ly
+  var x = lastWord(a)
+  return x !== "" && x === lastWord(b)
 }
 
 function sameBout(espn, site) {
@@ -1763,8 +1797,8 @@ function ldJsonNodes(html) {
   return nodes.filter(isObject)
 }
 
-function pflSiteFighter(c) {
-  var name = str(isObject(c) ? c.name : "")
+function officialFighter(name) {
+  name = str(name).trim()
   var parts = name.split(/\s+/)
   var tba = isTba(name)
   return {
@@ -1781,14 +1815,14 @@ function espnStyleDate(s) {
   return isFinite(t) ? new Date(t).toISOString().slice(0, 16) + "Z" : ""
 }
 
-// Events of the pages `bin/mma-api pflsite` printed: [{ url, name, date,
+// Events of the pages `bin/mma-api official pfl` prints: [{ url, name, date,
 // fights: [{ id, startDate, weightClass, fighters }] }]. Cancelled bouts and
 // bouts that are not two named sides are left out.
 function parsePflSite(text) {
   var data = typeof text === "string" ? parseJson(text) : text
   var pages = isObject(data) && isObject(data.events) ? data.events : ({})
   var out = []
-  Object.keys(pages).slice(0, pflSiteEventMax).forEach(function(path) {
+  Object.keys(pages).slice(0, officialEventMax).forEach(function(path) {
     var nodes = ldJsonNodes(String(pages[path]))
     var ev = null
     nodes.forEach(function(n) { if (!ev && /#event$/.test(str(n["@id"])) && Array.isArray(n.subEvent)) ev = n })
@@ -1801,10 +1835,10 @@ function parsePflSite(text) {
       var desc = str(s.description)
       var wc = /\s-\s([^-]+)$/.exec(desc)
       fights.push({
-        id: "pflsite-" + (/#fight-(\w+)$/.exec(str(s["@id"])) || [0, i])[1],
+        id: "pfl-" + (/#fight-(\w+)$/.exec(str(s["@id"])) || [0, i])[1],
         startDate: espnStyleDate(s.startDate),
         weightClass: wc ? wc[1].replace(/\s*(World\s+)?(Interim\s+)?Title$/i, "").trim() : "",
-        fighters: [pflSiteFighter(sides[0]), pflSiteFighter(sides[1])]
+        fighters: [officialFighter(sides[0].name), officialFighter(sides[1].name)]
       })
     })
     if (/cancel/i.test(str(ev.eventStatus))) return
@@ -1813,18 +1847,19 @@ function parsePflSite(text) {
   return out
 }
 
-// ESPN's PFL events, their upcoming bouts made to match the site's card. An
+// A base source's events, their upcoming bouts made to match the official site's card. An
 // event with no counterpart on the site (none within a day and a half of it) is
 // returned as it is, and so is the whole list when the site's answer cannot be read.
-function applyPflSite(events, text) {
-  var site = parsePflSite(text)
+function applyOfficial(orgId, events, text) {
+  var parse = officialParsers[officialOf(orgId)]
+  var site = parse ? parse(text) : []
   return list(events).map(function(e) {
     if (!isObject(e) || e.finished) return e
     var t = new Date(e.date).getTime()
     var match = null
     site.forEach(function(s) {
       var d = Math.abs(new Date(s.date).getTime() - t)
-      if (d <= pflSiteMatchMs && (!match || d < match.d)) match = { d: d, s: s }
+      if (d <= officialMatchMs && (!match || d < match.d)) match = { d: d, s: s }
     })
     if (!match || match.s.fights.length === 0) return e
     var sf = match.s.fights
@@ -1835,10 +1870,10 @@ function applyPflSite(events, text) {
       return !e.fights.some(function(ef) { return sameBout(ef, x) })
     }).slice(0, Math.max(0, maxFightsPerEvent - kept.length)).map(function(x) {
       return {
-        id: x.id, weightClass: x.weightClass, rounds: 0, startDate: x.startDate,
+        id: "official-" + x.id, weightClass: x.weightClass, rounds: 0, startDate: x.startDate,
         status: "STATUS_SCHEDULED", done: false, round: 0, clock: "",
         fighters: x.fighters, segment: "", matchNumber: 0, champion: false, method: "",
-        source: pflSiteSource
+        source: officialSource
       }
     })
     if (extra.length === 0 && kept.length === e.fights.length) return e
@@ -1848,6 +1883,104 @@ function applyPflSite(events, text) {
     copy.fightCount = copy.fights.length
     // ESPN lists the main event last; if that bout was dropped, the last one left is it.
     copy.headliner = kept.length > 0 ? kept[kept.length - 1] : e.headliner
+    // What the site changed, for the log (see Service.qml): nothing is dropped silently.
+    copy.officialDiff = {
+      dropped: e.fights.filter(function(ef) { return kept.indexOf(ef) < 0 }).map(fightTitle),
+      added: extra.map(fightTitle)
+    }
     return copy
   })
+}
+
+// Parsers of the official sites, by the promotions' `official` id. Each turns
+// the output of `bin/mma-api official <id>` into [{ url, name, date (ESPN style),
+// fights: [{ id, startDate, weightClass, fighters: [two fighter objects] }] }].
+var officialParsers = { pfl: parsePflSite, ufc: parseUfcSite }
+
+// ----------------------------------------------------------- ufc.com's cards
+// ufc.com's event pages have no structured data, so the HTML is read: three
+// sections ("main-card", "prelims-card", "early-prelims"), each with the Unix
+// time its bouts start, then one "c-listing-fight" block per bout with the red
+// and blue corners' names and the weight class. The page comes in the language
+// of the visitor's region, so bin/mma-api asks for English; should a page come
+// back in another language anyway, its weight classes (the only words read) are
+// dropped rather than shown. Scanned with indexOf, not regexes: the page is not ours.
+
+var ufcSections = ["main-card", "prelims-card", "early-prelims"]
+var ufcBoutMark = "class=\"c-listing-fight\" data-fmid="
+
+// The corner's name is the text of its link: either two spans (given and
+// family name) or, for some fighters, plain text. A link is at most a few
+// hundred characters; anything longer is not a name.
+function ufcCorner(block, corner) {
+  var at = block.indexOf("c-listing-fight__corner-name--" + corner)
+  if (at < 0) return ""
+  var open = block.indexOf("<a ", at)
+  var close = open < 0 ? -1 : block.indexOf("</a>", open)
+  if (close < 0 || close - open > 1000) return ""
+  var name = htmlText(block.slice(open, close))
+  return name.length <= 80 ? name : ""
+}
+
+// "Heavyweight Title Bout" -> "Heavyweight", "Women's Bantamweight" as is.
+function ufcWeightClass(block) {
+  var mark = "c-listing-fight__class-text\">"
+  var at = block.indexOf(mark)
+  var end = at < 0 ? -1 : block.indexOf("</div>", at)
+  if (end < 0 || end - at > 200) return ""
+  return htmlText(block.slice(at + mark.length, end)).replace(/\s+(?:Title\s+)?Bout$/i, "").slice(0, 40)
+}
+
+function pageLanguage(html) {
+  var at = html.indexOf("<html")
+  var m = at < 0 ? null : /lang="([a-z]{2})/i.exec(html.slice(at, at + 200))
+  return m ? m[1].toLowerCase() : ""
+}
+
+function unixToEspn(sec) {
+  var n = Number(sec)
+  return isFinite(n) && n > 0 ? new Date(n * 1000).toISOString().slice(0, 16) + "Z" : ""
+}
+
+// Events of the pages `bin/mma-api official ufc` prints, in the shape of
+// parsePflSite. The event's date is its earliest section's start.
+function parseUfcSite(text) {
+  var data = typeof text === "string" ? parseJson(text) : text
+  var pages = isObject(data) && isObject(data.events) ? data.events : ({})
+  var out = []
+  Object.keys(pages).slice(0, officialEventMax).forEach(function(path) {
+    var html = str(pages[path]).slice(0, maxResponseChars)
+    var english = pageLanguage(html) === "en"
+    var marks = []
+    ufcSections.forEach(function(id) {
+      var i = html.indexOf("id=\"" + id + "\"")
+      if (i >= 0) marks.push({ id: id, at: i })
+    })
+    marks.sort(function(a, b) { return a.at - b.at })
+    var fights = []
+    var date = ""
+    marks.forEach(function(m, k) {
+      var end = k + 1 < marks.length ? marks[k + 1].at : html.length
+      var t = html.indexOf("data-timestamp=\"", m.at)
+      var start = t >= 0 && t < end && t - m.at < 2000 ? unixToEspn(html.slice(t + 16, html.indexOf("\"", t + 16))) : ""
+      if (start !== "" && (date === "" || start < date)) date = start
+      var at = html.indexOf(ufcBoutMark, m.at)
+      while (at >= 0 && at < end && fights.length < maxFightsPerEvent) {
+        var next = html.indexOf(ufcBoutMark, at + 10)
+        var block = html.slice(at, next < 0 || next > end ? end : next)
+        var red = ufcCorner(block, "red"), blue = ufcCorner(block, "blue")
+        var id = /^"(\d{1,12})"/.exec(block.slice(ufcBoutMark.length, ufcBoutMark.length + 20))
+        if (red !== "" && blue !== "")
+          fights.push({
+            id: "ufc-" + (id ? id[1] : fights.length),
+            startDate: start, weightClass: english ? ufcWeightClass(block) : "",
+            fighters: [officialFighter(red), officialFighter(blue)]
+          })
+        at = next
+      }
+    })
+    if (date === "" || fights.length === 0) return
+    out.push({ url: "https://www.ufc.com" + path, name: path, date: date, fights: fights })
+  })
+  return out
 }

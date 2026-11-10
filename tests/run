@@ -23,9 +23,12 @@ bash -n bin/mma-api \
   && ! bin/mma-api sherdog hxmma 'x;y' > /dev/null 2>&1 \
   && ! MMA_SHERDOG_BASE=http://127.0.0.1:9 bin/mma-api sherdog hxmma 30 > /dev/null 2>&1 \
   && ! MMA_SHERDOG_BASE=file:///etc bin/mma-api sherdog hxmma 30 > /dev/null 2>&1 \
-  && ! bin/mma-api pflsite extra > /dev/null 2>&1 \
-  && ! MMA_PFL_BASE=http://127.0.0.1:9 bin/mma-api pflsite > /dev/null 2>&1 \
-  && ! MMA_PFL_BASE=file:///etc bin/mma-api pflsite > /dev/null 2>&1 \
+  && ! bin/mma-api official > /dev/null 2>&1 \
+  && ! bin/mma-api official nope > /dev/null 2>&1 \
+  && ! MMA_PFL_BASE=http://127.0.0.1:9 bin/mma-api official pfl > /dev/null 2>&1 \
+  && ! MMA_PFL_BASE=file:///etc bin/mma-api official pfl > /dev/null 2>&1 \
+  && ! MMA_UFC_BASE=http://127.0.0.1:9 MMA_UFC_CRAWL_DELAY=0 bin/mma-api official ufc > /dev/null 2>&1 \
+  && ! MMA_UFC_BASE=file:///etc MMA_UFC_CRAWL_DELAY=0 bin/mma-api official ufc > /dev/null 2>&1 \
   && ! bin/mma-api records > /dev/null 2>&1 \
   && ! MMA_SHERDOG_BASE=http://127.0.0.1:9 bin/mma-api records 'Nik Bagley' > /dev/null 2>&1 \
   && ! MMA_SHERDOG_BASE=file:///etc bin/mma-api records 'Nik Bagley' > /dev/null 2>&1 \
