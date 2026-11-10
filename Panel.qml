@@ -281,25 +281,52 @@ Panel {
   property bool collapsedPast: false
   property bool collapsedUpcoming: false
   function isCollapsed(e) { return e.finished === true ? root.collapsedPast : root.collapsedUpcoming }
-  // Selectable: an event in an expanded group, or the "load more" row.
-  function selectable(i) {
-    return i === root.events.length ? root.hasMore : !root.isCollapsed(root.events[i])
+  // A group's header is a stop of its own: selecting it (headerSelected, with
+  // `selected` naming the group's first event) lets Enter/Right fold it.
+  property bool headerSelected: false
+  onSelectedChanged: { root.headerSelected = false; root.revealSelected() }
+  function isGroupStart(i) {
+    return i === 0 || (root.events[i - 1].finished === true) !== (root.events[i].finished === true)
   }
   function toggleGroup(finished) {
     if (finished) root.collapsedPast = !root.collapsedPast
     else root.collapsedUpcoming = !root.collapsedUpcoming
-    // Keep the selection on something visible.
-    var n = root.lastSelectable, i
-    if (n < 0 || root.selectable(root.selected)) return
-    for (i = root.selected; i <= n; i++) if (root.selectable(i)) { root.selected = i; return }
-    for (i = root.selected; i >= 0; i--) if (root.selectable(i)) { root.selected = i; return }
+    // Keep the selection on something visible: fold lands on the header.
+    var e = root.events[root.selected]
+    if (e && root.isCollapsed(e)) {
+      var i = root.selected
+      while (i > 0 && !root.isGroupStart(i)) i--
+      root.selected = i
+      root.headerSelected = true
+    }
+  }
+
+  // Everything the arrow keys can land on, top to bottom.
+  function stops() {
+    var out = [], n = root.events.length
+    for (var i = 0; i < n; i++) {
+      if (root.isGroupStart(i)) out.push({ i: i, header: true })
+      if (!root.isCollapsed(root.events[i])) out.push({ i: i, header: false })
+    }
+    if (root.hasMore) out.push({ i: n, header: false })
+    return out
   }
 
   function moveSelection(dy) {
     if (root.events.length === 0) return
-    var step = dy < 0 ? -1 : 1, i = root.selected + step
-    while (i >= 0 && i <= root.lastSelectable && !root.selectable(i)) i += step
-    if (i >= 0 && i <= root.lastSelectable) root.selected = i
+    var s = root.stops(), k = -1
+    for (var j = 0; j < s.length; j++)
+      if (s[j].i === root.selected && s[j].header === root.headerSelected) { k = j; break }
+    var t = s[Math.max(0, Math.min(s.length - 1, k + (dy < 0 ? -1 : 1)))]
+    if (!t) return
+    root.selected = t.i
+    root.headerSelected = t.header
+  }
+
+  // Enter/Right on a header folds or unfolds its group.
+  function activateSelection() {
+    if (root.headerSelected) root.toggleGroup(root.events[root.selected].finished === true)
+    else root.openEvent(root.selected)
   }
 
   function openEvent(index) {
@@ -419,8 +446,6 @@ Panel {
       listView.contentY = item.y + item.height - listView.height
   }
 
-  onSelectedChanged: root.revealSelected()
-
   // The zone an event's times are shown in: the chosen one, or its venue's.
   function zoneFor(e) { return Model.effectiveZone(root.timeZone, e) }
 
@@ -478,11 +503,11 @@ Panel {
           else if (dy !== 0) root.scrollCard(dy)
         }
         else if (dy !== 0) root.moveSelection(dy)
-        else if (dx > 0) root.openEvent(root.selected)
+        else if (dx > 0) root.activateSelection()
       }
       onActivateRequested: {
         if (root.showSettings) root.toggleOrganization(root.settingsSelected)
-        else if (!root.showCard) root.openEvent(root.selected)
+        else if (!root.showCard) root.activateSelection()
       }
       onCloseRequested: {
         if (root.showSettings) root.showSettings = false
@@ -505,7 +530,7 @@ Panel {
           else root.mma.hardRefresh()
         }
         else if (text === "o") {
-          var e = root.showCard ? root.currentEvent : root.events[root.selected]
+          var e = root.showCard ? root.currentEvent : root.headerSelected ? null : root.events[root.selected]
           if (e) root.mma.openUrl(e.url)
         }
       }
@@ -628,7 +653,7 @@ Panel {
             Keys.onPressed: function(event) {
               if (event.key === Qt.Key_Down) { root.moveSelection(1); event.accepted = true }
               else if (event.key === Qt.Key_Up) { root.moveSelection(-1); event.accepted = true }
-              else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.openEvent(root.selected); event.accepted = true }
+              else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.activateSelection(); event.accepted = true }
             }
             // Leaves the box, keeping the filter; Esc again closes the panel.
             Keys.onEscapePressed: keys.forceActiveFocus()
@@ -692,8 +717,7 @@ Panel {
                 // click to fold or unfold the group.
                 Text {
                   id: sectionHeader
-                  visible: entry.index === 0
-                    || (root.events[entry.index - 1].finished === true) !== (entry.modelData.finished === true)
+                  visible: root.isGroupStart(entry.index)
                   height: visible ? implicitHeight + Style.space(8) : 0
                   verticalAlignment: Text.AlignVCenter
                   leftPadding: Style.space(8)
@@ -704,6 +728,14 @@ Panel {
                   font.family: root.fontFamily
                   font.pixelSize: root.fs(Style.font.bodySmall)
                   font.bold: true
+
+                  Rectangle {
+                    z: -1
+                    anchors.fill: parent
+                    visible: root.headerSelected && root.selected === entry.index
+                    radius: Style.space(6)
+                    color: Qt.alpha(root.accent, 0.18)
+                  }
 
                   MouseArea {
                     anchors.fill: parent
@@ -721,10 +753,10 @@ Panel {
                   width: listColumn.width
                   height: Math.max(rowText.implicitHeight, tag.height) + Style.space(14)
                   radius: Style.space(6)
-                  color: row.index === root.selected ? Qt.alpha(root.accent, 0.18) : "transparent"
+                  color: row.index === root.selected && !root.headerSelected ? Qt.alpha(root.accent, 0.18) : "transparent"
 
                   Rectangle {
-                    visible: row.index === root.selected
+                    visible: row.index === root.selected && !root.headerSelected
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
                     width: Style.space(3)
@@ -839,7 +871,7 @@ Panel {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onEntered: root.selected = row.index
+                    onEntered: { root.selected = row.index; root.headerSelected = false }
                     onClicked: root.openEvent(row.index)
                   }
                 }
@@ -866,7 +898,7 @@ Panel {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onEntered: root.selected = root.events.length
+                onEntered: { root.selected = root.events.length; root.headerSelected = false }
                 onClicked: root.showMore()
               }
             }
