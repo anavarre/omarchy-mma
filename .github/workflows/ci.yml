@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest   # only hosts the container; the tests run on Arch
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm --needed git nodejs curl bash gawk sed
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: tests/run
