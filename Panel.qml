@@ -876,8 +876,11 @@ Panel {
         // A gently bobbing chevron while more events wait below the fold.
         Text {
           id: moreHint
+          // The "load more" row carries its own chevron once any of it is in
+          // view, so this hint only covers content still below the fold.
           readonly property bool moreBelow: root.hasMore
-            || listView.contentY + listView.height < listView.contentHeight - 2
+            ? loadMoreRow.y >= listView.contentY + listView.height
+            : listView.contentY + listView.height < listView.contentHeight - 2
           visible: listView.visible && moreBelow
           width: parent.width
           horizontalAlignment: Text.AlignHCenter
