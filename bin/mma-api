@@ -36,6 +36,15 @@
 #       One JSON object: {"org": html, "events": {path: html}}. Model.js reads
 #       the HTML. It exits 1 when the organization page did not come through.
 #
+#   mma-api pflsite
+#       ESPN's PFL cards lag the promotion's own, so the upcoming events of
+#       pflmma.com are read as a second opinion: the /events listing, then the
+#       page of each upcoming event (the ones it links as "MATCHUPS", at most
+#       MAX_PFL_UPCOMING). Each page carries schema.org JSON-LD with one entry per
+#       bout. One JSON object: {"events": {path: html}}. Model.js reads it
+#       (applyPflSite). robots.txt allows these pages. It exits 1 when the
+#       listing did not come through.
+#
 #   mma-api records <name>...
 #       Wikipedia's cards carry no fight records, so the fighters' W-L-D come
 #       from Sherdog's fighter pages. A JSON object mapping every name to e.g.
@@ -45,7 +54,7 @@
 #       namesake gets "n/a" rather than someone else's record. It exits 1 when
 #       every name came back "blocked".
 #
-# MMA_SITE_BASE, MMA_CORE_BASE, MMA_WIKI_API, MMA_ARES_BASE and MMA_SHERDOG_BASE override the endpoints for running the
+# MMA_SITE_BASE, MMA_CORE_BASE, MMA_WIKI_API, MMA_ARES_BASE, MMA_SHERDOG_BASE and MMA_PFL_BASE override the endpoints for running the
 # script by hand. They must be https: curl refuses every other scheme, and
 # Service.qml does not pass them through from the shell's environment.
 set -u -o pipefail
@@ -55,6 +64,7 @@ CORE_BASE=${MMA_CORE_BASE:-https://sports.core.api.espn.com/v2/sports/mma/league
 WIKI_API=${MMA_WIKI_API:-https://en.wikipedia.org/w/api.php}
 SHERDOG_BASE=${MMA_SHERDOG_BASE:-https://www.sherdog.com}
 ARES_BASE=${MMA_ARES_BASE:-https://www.aresfighting.com}
+PFL_BASE=${MMA_PFL_BASE:-https://pflmma.com}
 # Wikimedia asks API clients to say who they are.
 WIKI_UA="omarchy-mma (https://github.com/anavarre/omarchy-mma)"
 # Concurrent requests to ESPN's API, and to the HTML sites (ARES, Sherdog),
@@ -69,6 +79,7 @@ MAX_ARES_UPCOMING=8
 MAX_ARES_PAST=6
 MAX_SHERDOG_UPCOMING=8
 MAX_SHERDOG_PAST=6
+MAX_PFL_UPCOMING=8
 # Size caps per answer, each well over ten times the largest seen (ESPN's
 # scoreboard ~100 KB, a competition ~20 KB, a year page's wikitext ~350 KB, an
 # event page ~110 KB), and the cap on what one command prints in all: the
@@ -346,6 +357,35 @@ case "$cmd" in
     done
     printf '}}'
     ;;
+  pflsite)
+    [ $# -eq 0 ] || die "usage: pflsite"
+    tmp=$(mktemp -d) || exit 1
+    trap 'rm -rf "$tmp"' EXIT
+    fetch "$PFL_BASE/events" "$WIKI_UA" > "$tmp/list" 2> /dev/null && [ -s "$tmp/list" ] || exit 1
+    # Upcoming events are the ones whose button reads MATCHUPS (past ones say
+    # VIEW RESULTS); the listing shows each of them twice.
+    paths=$(tr '\n\r' '  ' < "$tmp/list" \
+      | grep -oE 'href="https://pflmma\.com/event/[A-Za-z0-9_-]+"[^>]*>[[:space:]]*MATCHUPS' \
+      | sed -E 's|href="https://pflmma\.com(/event/[A-Za-z0-9_-]+)".*|\1|' \
+      | awk '!seen[$0]++' | head -n "$MAX_PFL_UPCOMING")
+    n=0
+    for path in $paths; do
+      n=$((n + 1))
+      key=${path//\//_}
+      { fetch "$PFL_BASE$path" "$WIKI_UA" > "$tmp/event.$key" 2> /dev/null || rm -f "$tmp/event.$key"; } &
+      if [ $((n % SITE_PARALLEL)) -eq 0 ]; then wait; fi
+    done
+    wait
+    printf '{"events":{'
+    sep=""
+    for path in $paths; do
+      key=${path//\//_}
+      [ -s "$tmp/event.$key" ] && fits "$tmp/event.$key" || continue
+      printf '%s"%s":' "$sep" "$path"; jstr < "$tmp/event.$key"
+      sep=","
+    done
+    printf '}}'
+    ;;
   records)
     [ $# -ge 1 ] && [ $# -le $((MAX_FIGHTS * 2)) ] || die "usage: records <name>..."
     tmp=$(mktemp -d) || exit 1
@@ -374,6 +414,6 @@ case "$cmd" in
     [ "$ok" -eq 1 ] || exit 1
     ;;
   *)
-    die "usage: mma-api events|card|wiki|ares|sherdog|records ..."
+    die "usage: mma-api events|card|wiki|ares|sherdog|pflsite|records ..."
     ;;
 esac

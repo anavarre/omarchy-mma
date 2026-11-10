@@ -62,6 +62,27 @@ ESPN's public JSON API. It needs no key, but it is unofficial and could change.
 - Fighter `order` 1 is the champion or higher-billed fighter and 2 is the
   challenger. ESPN lists them in no fixed order, so the plugin sorts by it.
 
+### PFL: ESPN, with pflmma.com as the source of truth
+
+ESPN's PFL cards can lag the promotion's own (a late addition may be on
+[pflmma.com](https://pflmma.com/events) days before ESPN lists it), and a bout that was
+pulled can linger on ESPN. The official site is the source of truth for which bouts are
+on a card, so the upcoming events of the site are read (`bin/mma-api pflsite`; each
+event page carries schema.org JSON-LD, one entry per bout, and its `robots.txt` allows
+these pages) and ESPN's cards are made to match:
+
+- A bout the site lists and ESPN does not is added. It has no ESPN segment, so it joins
+  the section whose bouts start at the same time, after the ones ESPN ranks.
+- A bout ESPN lists and the site does not is dropped. A replacement opponent therefore
+  shows the site's version.
+- ESPN still supplies everything the site lacks (ids, segments, records, results) for
+  the bouts both list. A bout that is already finished stays, since results are ESPN's.
+- Bouts are matched by fighters' last names, accents ignored, in either order.
+- Safeguards: the site only rules when at least one of its bouts matches an ESPN bout
+  (otherwise the events were probably paired by date alone), an empty site card changes
+  nothing, and only events ESPN already lists are touched. If the site does not answer or
+  cannot be read, ESPN's cards stand, without an error.
+
 ### Cage Warriors, KSW, Oktagon, ACA and ONE: Wikipedia
 
 ESPN has next to no Cage Warriors coverage, and cagewarriors.com refuses

@@ -1349,7 +1349,7 @@ test("a manual refresh is throttled and keeps the vendor's refusals", () => {
 
 test("every process output is size-checked before it is parsed", () => {
   const src = fs.readFileSync(__dirname + "/../Service.qml", "utf8");
-  assert.strictEqual((src.match(/Model\.maxResponseChars/g) || []).length, 3, "events, card and records");
+  assert.strictEqual((src.match(/Model\.maxResponseChars/g) || []).length, 4, "events, card, records and the PFL site");
   assert.ok(M.maxResponseChars <= 32 * 1024 * 1024);
 });
 
@@ -1361,7 +1361,7 @@ test("bin/mma-api caps, paces and pins its requests", () => {
   // Every fetch in a background job of an HTML site is paced by SITE_PARALLEL,
   // and the card's status request is no longer a second concurrent job.
   assert.strictEqual((api.match(/n % PARALLEL/g) || []).length, 1, "ESPN cards only");
-  assert.strictEqual((api.match(/n % SITE_PARALLEL/g) || []).length, 4, "ARES cards, ARES results, Sherdog events, records");
+  assert.strictEqual((api.match(/n % SITE_PARALLEL/g) || []).length, 5, "ARES cards, ARES results, Sherdog events, PFL events, records");
   assert.ok(!/status\?lang=en" > "\$tmp\/\$n\.s\.json" 2> \/dev\/null \\\n\s*\|\| rm -f "\$tmp\/\$n\.s\.json"; \} &/.test(api));
 });
 
@@ -1393,3 +1393,94 @@ test("parseScoreboard reads a bounded number of events from a padded response", 
   const events = Array.from({ length: 150000 }, (_, i) => ({ id: String(i), date: "2026-11-01T00:00Z" }))
   assert.ok(M.parseScoreboard({ events }, "ufc").length <= 200)
 })
+
+// ---------------------------------------------------- PFL site as a second source
+// ESPN's Lyon card lacks Tandia vs Lohoré and Garnett vs Meredith, which the
+// PFL site lists; the site lacks Gittins vs Adiguzel, which ESPN lists.
+const pflEspn = M.parseScoreboard(fixture("pfl-lyon-scoreboard.json"), "pfl");
+const pflSitePages = JSON.stringify({ events: { "/event/pfl-lyon-2026": fixture("pfl-site-lyon.html") } });
+const lyonNames = (e) => e.fights.map((f) => f.fighters.map((x) => x.name).join(" v "));
+
+test("parsePflSite reads the bouts from the page's JSON-LD", () => {
+  const [lyon] = M.parsePflSite(pflSitePages);
+  assert.strictEqual(lyon.name, "PFL Lyon");
+  assert.strictEqual(lyon.date, "2026-12-19T20:00Z");
+  assert.strictEqual(lyon.fights.length, 9);
+  const t = lyon.fights.find((f) => f.fighters[0].name === "Oualy Tandia");
+  assert.strictEqual(t.fighters[1].name, "Alex Lohoré");
+  assert.strictEqual(t.weightClass, "Welterweight");
+  assert.strictEqual(t.startDate, "2026-12-19T20:00Z");
+  assert.strictEqual(lyon.fights[0].weightClass, "Bantamweight");
+});
+
+test("applyPflSite makes ESPN's upcoming bouts match the official site's card", () => {
+  assert.strictEqual(pflEspn[0].fights.length, 8);
+  const [lyon] = M.applyPflSite(pflEspn, pflSitePages);
+  const names = lyonNames(lyon);
+  // The site's nine bouts: ESPN's seven matching ones plus Tandia and Garnett.
+  assert.strictEqual(lyon.fights.length, 9);
+  assert.strictEqual(lyon.fightCount, 9);
+  assert.ok(names.includes("Oualy Tandia v Alex Lohoré"));
+  assert.ok(names.includes("Dean Garnett v Bryce Meredith"));
+  // ESPN lists Gittins vs Adiguzel, the site does not: the site rules.
+  assert.ok(!names.some((n) => /Gittins/.test(n)));
+  // Same bouts under different spellings are neither dropped nor added twice.
+  assert.strictEqual(names.filter((n) => /Chipito|Atangana|Lapilus/.test(n)).length, 3);
+  assert.strictEqual(lyon.fights.filter((f) => f.source === "pfl-site").length, 2);
+  // ESPN's data is kept for the bouts both list.
+  assert.ok(lyon.fights.filter((f) => !f.source).every((f) => /^\d+$/.test(f.id)));
+});
+
+test("a replacement opponent on the site replaces ESPN's bout", () => {
+  const swapped = JSON.parse(JSON.stringify(pflEspn));
+  const f = swapped[0].fights.find((x) => x.fighters.some((y) => /Meskini/.test(y.name)));
+  f.fighters[0].name = "Adam Meskini";
+  f.fighters[1].name = "Someone Else";
+  const [lyon] = M.applyPflSite(swapped, pflSitePages);
+  const names = lyonNames(lyon);
+  assert.ok(!names.some((n) => /Someone Else/.test(n)));
+  assert.ok(names.some((n) => /Meskini/.test(n) && /Brachet/.test(n)));
+});
+
+test("applyPflSite keeps a finished bout and the headliner", () => {
+  const finished = JSON.parse(JSON.stringify(pflEspn));
+  const g = finished[0].fights.find((x) => x.fighters.some((y) => /Gittins/.test(y.name)));
+  g.done = true;
+  const [lyon] = M.applyPflSite(finished, pflSitePages);
+  assert.ok(lyonNames(lyon).some((n) => /Gittins/.test(n)));
+  assert.ok(lyon.headliner);
+});
+
+test("applyPflSite leaves events alone when the site is unreadable, unmatched, empty or finished", () => {
+  assert.deepStrictEqual(M.applyPflSite(pflEspn, "garbage"), pflEspn);
+  assert.deepStrictEqual(M.applyPflSite(pflEspn, JSON.stringify({ events: {} })), pflEspn);
+  const far = pflEspn.map((e) => Object.assign({}, e, { date: "2026-12-01T20:00Z" }));
+  assert.deepStrictEqual(M.applyPflSite(far, pflSitePages), far);
+  const done = pflEspn.map((e) => Object.assign({}, e, { finished: true }));
+  assert.deepStrictEqual(M.applyPflSite(done, pflSitePages), done);
+  // Paired by date but with no bout in common: not trusted to rule.
+  const other = JSON.parse(JSON.stringify(pflEspn));
+  other[0].fights.forEach((f, i) => { f.fighters[0].name = "A" + i + " Nobody" + i; f.fighters[1].name = "B" + i + " Anyone" + i; });
+  assert.deepStrictEqual(M.applyPflSite(other, pflSitePages), other);
+});
+
+test("a bout from the site joins the section of the ESPN bouts that start with it", () => {
+  const [lyon] = M.applyPflSite(pflEspn, pflSitePages);
+  const sections = M.buildCard(lyon, {});
+  const main = sections.find((s) => s.key === "main");
+  assert.ok(main.fights.some((f) => f.fighters[0].name === "Oualy Tandia"));
+  // ...and sorts after the bouts ESPN ranks.
+  assert.strictEqual(main.fights[main.fights.length - 1].source, "pfl-site");
+});
+
+test("fetchPlan queues the PFL site right after PFL", () => {
+  assert.deepStrictEqual(M.fetchPlan(["ufc", "pfl", "cw"]), ["ufc", "pfl", "pfl:site", "cw"]);
+  assert.deepStrictEqual(M.fetchPlan(["ufc"]), ["ufc"]);
+});
+
+test("a hostile PFL page is read in bounded time", () => {
+  const junk = '<script type="application/ld+json">'.repeat(20000);
+  const t = Date.now();
+  assert.deepStrictEqual(M.parsePflSite(JSON.stringify({ events: { "/event/x": junk } })), []);
+  assert.ok(Date.now() - t < 1000);
+});

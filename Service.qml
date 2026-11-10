@@ -100,7 +100,7 @@ Item {
     }
     root.loading = true
     root.errorText = ""
-    root.pending = wanted
+    root.pending = Model.fetchPlan(wanted)
     root.fetchNext()
   }
 
@@ -117,7 +117,9 @@ Item {
     var days = Model.snapLookaheadDays(root.lookaheadDays)
     var back = root.keepFinishedDays + 1
     var provider = Model.providerOf(org)
-    eventsProcess.command = provider === "wikipedia"
+    eventsProcess.command = org === "pfl:site"
+      ? ["/usr/bin/bash", root.api, "pflsite"]
+      : provider === "wikipedia"
       ? ["/usr/bin/bash", root.api, "wiki", org].concat(Model.wikiYears(now, days, back))
       : provider === "ares"
         ? ["/usr/bin/bash", root.api, "ares", String(back)]
@@ -229,7 +231,8 @@ Item {
     var job = root.cardQueue.shift()
     cardProcess.job = job
     // A "+" asks mma-api for how a finished fight was won.
-    var ids = job.event.fights.map(function(f) { return f.done ? f.id + "+" : f.id })
+    // Bouts only the PFL site lists are not ESPN competitions to ask about.
+    var ids = job.event.fights.filter(function(f) { return !f.source }).map(function(f) { return f.done ? f.id + "+" : f.id })
     cardProcess.command = ["/usr/bin/bash", root.api, "card", job.event.slug, job.event.id].concat(ids)
     cardProcess.running = true
   }
@@ -368,6 +371,18 @@ Item {
       // A parser exception here would skip fetchNext and leave the service
       // loading for good, so a response that cannot be read counts as a failure.
       var error = ""
+      // The PFL site is a second opinion on ESPN's cards: when it does not
+      // answer, or cannot be read, ESPN's cards stand as they are, without an error.
+      if (eventsProcess.org === "pfl:site") {
+        try {
+          var gp = root.gathered
+          if (exitCode === 0 && gp.pfl && eventsOut.text.length <= Model.maxResponseChars)
+            gp.pfl = Model.applyPflSite(gp.pfl, eventsOut.text)
+          root.gathered = gp
+        } catch (e) { }
+        Qt.callLater(root.fetchNext)
+        return
+      }
       if (exitCode === 0) {
         try {
           // The parsers run on the GUI thread: a response beyond the budget

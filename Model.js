@@ -685,6 +685,15 @@ function buildCard(event, segments) {
     copy.method = s ? s.method : str(f.method)
     return copy
   })
+  // A bout only a secondary source lists has no segment or billing of its own:
+  // it joins the section whose bouts start at the same time, and sorts last.
+  var segmentAt = ({})
+  fights.forEach(function(f) { if (!f.source && f.segment !== "") segmentAt[f.startDate] = f.segment })
+  fights.forEach(function(f) {
+    if (!f.source) return
+    f.rank = -1
+    if (f.segment === "" && segmentAt[f.startDate]) f.segment = segmentAt[f.startDate]
+  })
   var known = fights.some(function(f) { return f.segment !== "" })
   var sections = known ? sectionsFromSegments(fights) : sectionsFromStartTimes(fights)
   return sections.filter(function(s) { return s.fights.length > 0 })
@@ -1685,4 +1694,160 @@ function forOrganizations(events, selected) {
 function errorMessage(stderr, exitCode) {
   var s = String(stderr || "").replace(/[\x00-\x1F\x7F]/g, " ").trim().slice(0, 160)
   return s !== "" ? s : "Request failed (" + exitCode + ")"
+}
+
+// ------------------------------------------------------------ PFL's own site
+// ESPN's PFL cards lag the promotion's: a late addition can be on pflmma.com
+// for days before ESPN lists it, and a bout that was pulled can linger on ESPN.
+// pflmma.com's event pages carry schema.org JSON-LD, one SportsEvent per bout,
+// which is what is read here. The official site is the source of truth for
+// which bouts are on a card; ESPN supplies what the site lacks (ids, segments,
+// records, results). So for an upcoming event the site matches: a bout ESPN
+// lists that the site does not is dropped, and a bout only the site lists is
+// added. Safeguards: a bout already finished is ESPN's and stays; the site only
+// rules when at least one of its bouts matches an ESPN bout (otherwise the two
+// events were probably paired by date alone); an empty site card changes nothing.
+
+var pflSiteSource = "pfl-site"
+var pflSiteEventMax = 12
+var pflSiteMatchMs = 36 * 3600 * 1000
+
+// The fetch plan: the pseudo-organization "pfl:site" runs right after "pfl".
+function fetchPlan(wanted) {
+  var out = []
+  list(wanted).forEach(function(o) {
+    out.push(o)
+    if (o === "pfl") out.push("pfl:site")
+  })
+  return out
+}
+
+// Lowercase, accents and punctuation gone: "Alex Lohoré" -> "alex lohore".
+function foldName(s) {
+  var t = String(s || "")
+  if (typeof t.normalize === "function") t = t.normalize("NFD").replace(/[̀-ͯ]/g, "")
+  return t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+}
+
+// Two spellings of a fighter match when their last words do: ESPN has "Boris
+// Mbarga Atangana" where the site has "Boris Atangana", and "Shelda Chipito"
+// where the site has "Miracle Chipito".
+function sameFighter(a, b) {
+  var x = foldName(a).split(" "), y = foldName(b).split(" ")
+  var lx = x[x.length - 1], ly = y[y.length - 1]
+  return lx !== "" && lx === ly
+}
+
+function sameBout(espn, site) {
+  var a = espn.fighters, b = site.fighters
+  return (sameFighter(a[0].name, b[0].name) && sameFighter(a[1].name, b[1].name)) ||
+    (sameFighter(a[0].name, b[1].name) && sameFighter(a[1].name, b[0].name))
+}
+
+// Scans with indexOf rather than a regex: the page is not ours, and the
+// regexes of this file are kept bounded (see the tests).
+function ldJsonNodes(html) {
+  var nodes = []
+  var at = 0
+  for (var n = 0; n < 8; n++) {
+    var mark = html.indexOf("application/ld+json", at)
+    if (mark < 0) break
+    var open = html.indexOf(">", mark)
+    var close = open < 0 ? -1 : html.indexOf("</script>", open)
+    if (close < 0) break
+    var data = parseJson(html.slice(open + 1, close))
+    if (Array.isArray(data)) nodes = nodes.concat(data)
+    else if (isObject(data)) nodes = nodes.concat(Array.isArray(data["@graph"]) ? data["@graph"] : [data])
+    at = close + 9
+  }
+  return nodes.filter(isObject)
+}
+
+function pflSiteFighter(c) {
+  var name = str(isObject(c) ? c.name : "")
+  var parts = name.split(/\s+/)
+  var tba = isTba(name)
+  return {
+    name: tba ? "TBA" : name,
+    shortName: tba ? "TBA" : (parts.length > 1 ? parts[0].charAt(0) + ". " + parts.slice(1).join(" ") : name),
+    record: "", country: "", winner: false, tba: tba
+  }
+}
+
+// "2026-12-19T15:00:00-05:00" -> "2026-12-19T20:00Z", the shape ESPN uses, so
+// that fights compare by string.
+function espnStyleDate(s) {
+  var t = new Date(String(s || "")).getTime()
+  return isFinite(t) ? new Date(t).toISOString().slice(0, 16) + "Z" : ""
+}
+
+// Events of the pages `bin/mma-api pflsite` printed: [{ url, name, date,
+// fights: [{ id, startDate, weightClass, fighters }] }]. Cancelled bouts and
+// bouts that are not two named sides are left out.
+function parsePflSite(text) {
+  var data = typeof text === "string" ? parseJson(text) : text
+  var pages = isObject(data) && isObject(data.events) ? data.events : ({})
+  var out = []
+  Object.keys(pages).slice(0, pflSiteEventMax).forEach(function(path) {
+    var nodes = ldJsonNodes(String(pages[path]))
+    var ev = null
+    nodes.forEach(function(n) { if (!ev && /#event$/.test(str(n["@id"])) && Array.isArray(n.subEvent)) ev = n })
+    if (!ev) return
+    var fights = []
+    list(ev.subEvent).filter(isObject).slice(0, maxFightsPerEvent).forEach(function(s, i) {
+      if (/cancel/i.test(str(s.eventStatus))) return
+      var sides = list(s.competitor).filter(isObject)
+      if (sides.length !== 2) return
+      var desc = str(s.description)
+      var wc = /\s-\s([^-]+)$/.exec(desc)
+      fights.push({
+        id: "pflsite-" + (/#fight-(\w+)$/.exec(str(s["@id"])) || [0, i])[1],
+        startDate: espnStyleDate(s.startDate),
+        weightClass: wc ? wc[1].replace(/\s*(World\s+)?(Interim\s+)?Title$/i, "").trim() : "",
+        fighters: [pflSiteFighter(sides[0]), pflSiteFighter(sides[1])]
+      })
+    })
+    if (/cancel/i.test(str(ev.eventStatus))) return
+    out.push({ url: str(ev.url) || "https://pflmma.com" + path, name: str(ev.name), date: espnStyleDate(ev.startDate), fights: fights })
+  })
+  return out
+}
+
+// ESPN's PFL events, their upcoming bouts made to match the site's card. An
+// event with no counterpart on the site (none within a day and a half of it) is
+// returned as it is, and so is the whole list when the site's answer cannot be read.
+function applyPflSite(events, text) {
+  var site = parsePflSite(text)
+  return list(events).map(function(e) {
+    if (!isObject(e) || e.finished) return e
+    var t = new Date(e.date).getTime()
+    var match = null
+    site.forEach(function(s) {
+      var d = Math.abs(new Date(s.date).getTime() - t)
+      if (d <= pflSiteMatchMs && (!match || d < match.d)) match = { d: d, s: s }
+    })
+    if (!match || match.s.fights.length === 0) return e
+    var sf = match.s.fights
+    var inSite = function(ef) { return sf.some(function(x) { return sameBout(ef, x) }) }
+    if (!e.fights.some(inSite)) return e
+    var kept = e.fights.filter(function(ef) { return ef.done || inSite(ef) })
+    var extra = sf.filter(function(x) {
+      return !e.fights.some(function(ef) { return sameBout(ef, x) })
+    }).slice(0, Math.max(0, maxFightsPerEvent - kept.length)).map(function(x) {
+      return {
+        id: x.id, weightClass: x.weightClass, rounds: 0, startDate: x.startDate,
+        status: "STATUS_SCHEDULED", done: false, round: 0, clock: "",
+        fighters: x.fighters, segment: "", matchNumber: 0, champion: false, method: "",
+        source: pflSiteSource
+      }
+    })
+    if (extra.length === 0 && kept.length === e.fights.length) return e
+    var copy = {}
+    for (var k in e) copy[k] = e[k]
+    copy.fights = kept.concat(extra)
+    copy.fightCount = copy.fights.length
+    // ESPN lists the main event last; if that bout was dropped, the last one left is it.
+    copy.headliner = kept.length > 0 ? kept[kept.length - 1] : e.headliner
+    return copy
+  })
 }
