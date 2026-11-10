@@ -1372,7 +1372,7 @@ test("bin/mma-api caps, paces and pins its requests", () => {
   // Every fetch in a background job of an HTML site is paced by SITE_PARALLEL,
   // and the card's status request is no longer a second concurrent job.
   assert.strictEqual((api.match(/n % PARALLEL/g) || []).length, 1, "ESPN cards only");
-  assert.strictEqual((api.match(/n % SITE_PARALLEL/g) || []).length, 5, "ARES cards, ARES results, Sherdog events, PFL events, records");
+  assert.strictEqual((api.match(/n % SITE_PARALLEL/g) || []).length, 4, "ARES cards, ARES results, Sherdog events, PFL events (records use a sliding window of SITE_PARALLEL)");
   assert.ok(!/status\?lang=en" > "\$tmp\/\$n\.s\.json" 2> \/dev\/null \\\n\s*\|\| rm -f "\$tmp\/\$n\.s\.json"; \} &/.test(api));
 });
 
@@ -1586,4 +1586,23 @@ test("official-only bouts on an ESPN card get a Sherdog record lookup, ESPN's ow
   const done = M.withRecords(event, { "Cat Gamma": "7-2-0" }, true);
   assert.strictEqual(done.fights[1].fighters[0].record, "7-2-0");
   assert.strictEqual(M.withRecords(event, { "Cat Gamma": "n/a" }, true).fights[1].fighters[0].recordMissing, "na");
+});
+
+test("parseScoreboard bounds nested arrays before expanding them", () => {
+  const big = n => Array.from({ length: n }, () => ({}));
+  const ev = {
+    id: "1", name: "Big", date: "2026-11-01T00:00Z",
+    status: { type: { name: "STATUS_SCHEDULED" } },
+    links: big(100000), venues: big(100000),
+    competitions: [{
+      id: "9",
+      competitors: [{ order: 1, athlete: { displayName: "A" } }, { order: 2, athlete: { displayName: "B" } }].concat(big(150000)),
+      broadcasts: [{ names: Array.from({ length: 100000 }, () => "X") }]
+    }].concat(big(100000))
+  };
+  const out = M.parseScoreboard(JSON.stringify({ events: [ev] }), "ufc");
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].fights.length, 40);
+  assert.deepStrictEqual(out[0].fights[0].fighters.map(f => f.name), ["A", "B"]);
+  assert.strictEqual(M.sortedFighters(big(150000)).length, 2);
 });

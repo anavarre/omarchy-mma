@@ -76,6 +76,8 @@ WIKI_UA="omarchy-mma (https://github.com/anavarre/omarchy-mma)"
 # which are ordinary web servers and get a gentler pace.
 PARALLEL=16
 SITE_PARALLEL=4
+# Fighter lookups (records) run as a sliding window of SITE_PARALLEL: a new
+# one starts as soon as any finishes, rather than waiting for a whole batch.
 # A card has at most about 15 fights; never make more requests than this for
 # one event, whatever the scoreboard listed.
 MAX_FIGHTS=40
@@ -427,7 +429,7 @@ case "$cmd" in
       n=$((n + 1))
       printf '%s' "$name" > "$tmp/$n.name"
       { record_of "$name" > "$tmp/$n.rec" 2> /dev/null; } &
-      if [ $((n % SITE_PARALLEL)) -eq 0 ]; then wait; fi
+      if [ "$(jobs -rp | wc -l)" -ge "$SITE_PARALLEL" ]; then wait -n; fi
     done
     wait
     printf '{'

@@ -365,13 +365,18 @@ function isObject(v) { return v !== null && typeof v === "object" }
 // which runs one request per fight, whatever the scoreboard claims.
 var maxFightsPerEvent = 40
 
+// Remote arrays nested inside an event are read through head(), which looks
+// at no more than this many raw entries, whatever length the response claims.
+var nestedMax = 8
+function head(v) { return list(v).slice(0, nestedMax) }
+
 function isTba(name) { return name === "" || /\btba\b/i.test(name) }
 
 function fighter(c) {
   var a = (c && c.athlete) || {}
   var name = String(a.displayName || a.fullName || "")
   var tba = isTba(name)
-  var recs = list(c && c.records)
+  var recs = head(c && c.records)
   var rec = recs.length > 0 && isObject(recs[0]) ? recs[0].summary : ""
   return {
     name: tba ? "TBA" : name,
@@ -388,7 +393,7 @@ function fighter(c) {
 // lists the competitors in no fixed order, so sort by it. Callers put
 // `fighters[0]` on the left and `fighters[1]` on the right.
 function sortedFighters(competitors) {
-  var sides = list(competitors).map(function(c, i) {
+  var sides = head(competitors).map(function(c, i) {
     var o = Number(isObject(c) ? c.order : NaN)
     return { order: isFinite(o) && o > 0 ? o : i + 1, c: isObject(c) ? c : null }
   })
@@ -434,7 +439,7 @@ function broadcastText(comp) {
   if (!comp) return ""
   if (comp.broadcast) return String(comp.broadcast)
   var b = list(comp.broadcasts)[0]
-  return isObject(b) ? list(b.names).map(String).join(", ") : ""
+  return isObject(b) ? head(b.names).map(String).join(", ") : ""
 }
 
 // A URL that may be handed to the browser launcher: https only, on one of the
@@ -451,10 +456,10 @@ function safeUrl(href) {
 
 // The event's ESPN page, from the link marked as the event's own.
 function eventUrl(e) {
-  var links = list(e.links)
+  var links = head(e.links)
   for (var i = 0; i < links.length; i++) {
     var l = links[i]
-    if (isObject(l) && list(l.rel).indexOf("event") >= 0 && safeUrl(l.href) !== "") return safeUrl(l.href)
+    if (isObject(l) && head(l.rel).indexOf("event") >= 0 && safeUrl(l.href) !== "") return safeUrl(l.href)
   }
   return ""
 }
@@ -469,14 +474,14 @@ function parseScoreboard(text, orgId) {
   var out = []
   data.events.slice(0, scoreboardEventMax).forEach(function(e) {
     if (!isObject(e)) return
-    var comps = list(e.competitions).filter(isObject).slice(0, maxFightsPerEvent)
+    var comps = list(e.competitions).slice(0, maxFightsPerEvent).filter(isObject)
     var status = (e.status && e.status.type && e.status.type.name) || ""
     if (status === "STATUS_CANCELED") return
     var fights = comps.map(fight)
     var first = comps[0] || null
     // The main event is the last fight the scoreboard lists.
     var headliner = fights.length > 0 ? fights[fights.length - 1] : null
-    var venues = list(e.venues).filter(isObject)
+    var venues = head(e.venues).filter(isObject)
     var venue = venues[0] || (first && isObject(first.venue) ? first.venue : null)
     out.push({
       id: String(e.id),
