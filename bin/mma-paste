@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Bounded clipboard read for the panel's search box. The panel never lets Qt
+# read the clipboard itself: Qt pulls the whole selection into the shell
+# process, synchronously, before any length limit applies, and its Wayland
+# reader keeps waiting as long as the owner keeps sending bytes. Here the
+# transfer runs in a separate process, capped in bytes (head closes the pipe,
+# so wl-paste gets SIGPIPE) and in wall-clock time (timeout kills it).
+# Oversized or slow data is rejected, never truncated, so a multibyte
+# character is never cut in half. Usage: mma-paste [primary]
+set -u
+export LC_ALL=C   # ${#out} below counts bytes, not characters
+max=512
+deadline=1
+args=(--no-newline --type text)
+[ "${1:-}" = primary ] && args+=(--primary)
+[ $# -le 1 ] && { [ $# -eq 0 ] || [ "$1" = primary ]; } || exit 64
+out=$(timeout --kill-after=0.5 "$deadline" wl-paste "${args[@]}" 2> /dev/null | head -c $((max + 1)) | tr -d '\0'; exit "${PIPESTATUS[0]}")
+status=$?
+[ "${#out}" -le "$max" ] || exit 2
+# 141 is wl-paste hit by SIGPIPE, which only happens once head has its cap.
+case $status in 0|141) ;; *) exit 1 ;; esac
+printf '%s' "$out"

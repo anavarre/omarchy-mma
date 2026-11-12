@@ -44,6 +44,41 @@ var manualRefreshMinMs = 30 * 1000
 // anything beyond this, so a runaway response can never be fed to the parsers
 // (which run on the shell's GUI thread).
 var maxResponseChars = 16 * 1024 * 1024
+// The most one bin/mma-api command may take in all (BoundedProcess.qml), on top
+// of curl's own per-request limits: a hung source or a stuck subshell can hold
+// up the list or a card for this long and no longer. The slowest real runs
+// (ufc.com's crawl delay, a full card, a records batch) take a minute or two.
+var commandDeadlineSec = 300
+// The cache files are read in a separate process, in at most this many bytes
+// (about thirty times the largest seen) and this many seconds, so that neither
+// a huge file nor a FIFO in its place ever reaches the shell process. Anything
+// larger is ignored whole, like a file that does not parse.
+var cacheFileMaxBytes = 4 * 1024 * 1024
+var cacheReadDeadlineSec = 10
+
+// How many bytes `s` takes in UTF-8. Bytes that were not valid UTF-8 came in as
+// U+FFFD, counted at its 3 bytes, so this never undercounts what was read.
+function utf8Length(s) {
+  var t = String(s), n = 0
+  for (var i = 0; i < t.length; i++) {
+    var c = t.charCodeAt(i)
+    if (c < 0x80) n += 1
+    else if (c < 0x800) n += 2
+    else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < t.length) {
+      var d = t.charCodeAt(i + 1)
+      if (d >= 0xDC00 && d <= 0xDFFF) { n += 4; i++ } else n += 3
+    } else n += 3
+  }
+  return n
+}
+
+// The text of a bounded cache read (head -c cacheFileMaxBytes+1), or "" when the
+// read failed, timed out or the file is over the cap: such a file is not read in part.
+function boundedCacheText(text, exitCode, timedOut) {
+  if (exitCode !== 0 || timedOut) return ""
+  var t = String(text || "")
+  return utf8Length(t) <= cacheFileMaxBytes ? t : ""
+}
 // Hosts an event link may point to. ESPN's link field is remote-controlled,
 // so the browser is only ever sent to one of the sources themselves.
 var linkHosts = ["espn.com", "wikipedia.org", "aresfighting.com", "sherdog.com"]
@@ -69,6 +104,18 @@ var environment = {
   XDG_CONFIG_HOME: null,
   XDG_CACHE_HOME: null
 }
+
+// The same, for bin/mma-paste: wl-paste finds the compositor through
+// XDG_RUNTIME_DIR and WAYLAND_DISPLAY, so the shell's choice is kept, as it may
+// not be the default "wayland-0". WAYLAND_SOCKET is deliberately not passed
+// on: it names a file descriptor the shell's own connection consumed.
+var pasteEnvironment = (function() {
+  var e = {}
+  for (var k in environment) e[k] = environment[k]
+  e.XDG_RUNTIME_DIR = null
+  e.WAYLAND_DISPLAY = null
+  return e
+})()
 
 function localPath(url) {
   return decodeURIComponent(String(url).replace(/^file:\/\//, ""))
@@ -545,10 +592,22 @@ function searchText(s) {
   return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
 }
 
+// The longest search the box accepts, typed or pasted.
+var maxQueryLength = 100
+
+// Clipboard text made fit for the one-line search box: line breaks, tabs and
+// other control characters become single spaces, and anything past the room
+// left (`room`, defaulting to the whole limit) is dropped.
+function pastedQuery(text, room) {
+  var limit = room === undefined ? maxQueryLength : Math.max(0, Math.min(maxQueryLength, room))
+  var s = String(text || "").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").replace(/ {2,}/g, " ")
+  return Array.from(s).slice(0, limit).join("")
+}
+
 // The events that match a search: every word typed has to appear in the
 // event's name, its organization or the name of one of its fighters.
 function filterEvents(events, query) {
-  var words = searchText(query).split(/\s+/).filter(function(w) { return w !== "" })
+  var words = searchText(String(query || "").slice(0, maxQueryLength)).split(/\s+/).filter(function(w) { return w !== "" })
   if (words.length === 0) return events
   return events.filter(function(e) {
     var parts = [e.name, e.shortName, e.orgLabel]
@@ -1713,7 +1772,8 @@ function forOrganizations(events, selected) {
   return events.filter(function(e) { return selected.indexOf(e.org) >= 0 })
 }
 
-function errorMessage(stderr, exitCode) {
+function errorMessage(stderr, exitCode, timedOut) {
+  if (timedOut) return "No answer within " + Math.round(commandDeadlineSec / 60) + " minutes."
   var s = String(stderr || "").replace(/[\x00-\x1F\x7F]/g, " ").trim().slice(0, 160)
   return s !== "" ? s : "Request failed (" + exitCode + ")"
 }

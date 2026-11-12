@@ -121,7 +121,7 @@ Item {
     var days = Model.snapLookaheadDays(root.lookaheadDays)
     var back = root.keepFinishedDays + 1
     var provider = Model.providerOf(org)
-    eventsProcess.command = Model.officialBase(org) !== ""
+    eventsProcess.launch(Model.officialBase(org) !== ""
       ? ["/usr/bin/bash", root.api, "official", Model.officialOf(Model.officialBase(org))]
       : provider === "wikipedia"
       ? ["/usr/bin/bash", root.api, "wiki", org].concat(Model.wikiYears(now, days, back))
@@ -129,8 +129,7 @@ Item {
         ? ["/usr/bin/bash", root.api, "ares", String(back)]
         : provider === "sherdog"
           ? ["/usr/bin/bash", root.api, "sherdog", org, String(back)]
-          : ["/usr/bin/bash", root.api, "events", promo.slug, Model.dateRange(now, days, back)]
-    eventsProcess.running = true
+          : ["/usr/bin/bash", root.api, "events", promo.slug, Model.dateRange(now, days, back)])
   }
 
   // The events fetched so far, shown while the official sites are still being read.
@@ -260,8 +259,7 @@ Item {
     // A "+" asks mma-api for how a finished fight was won.
     // Bouts only the official site lists are not ESPN competitions to ask about.
     var ids = job.event.fights.filter(function(f) { return !f.source }).map(function(f) { return f.done ? f.id + "+" : f.id })
-    cardProcess.command = ["/usr/bin/bash", root.api, "card", job.event.slug, job.event.id].concat(ids)
-    cardProcess.running = true
+    cardProcess.launch(["/usr/bin/bash", root.api, "card", job.event.slug, job.event.id].concat(ids))
   }
 
   // Looks up the records of the fighters on an inline card that still have
@@ -283,8 +281,7 @@ Item {
     }
     if (!job) return
     recordsProcess.job = job
-    recordsProcess.command = ["/usr/bin/bash", root.api, "records"].concat(job.names)
-    recordsProcess.running = true
+    recordsProcess.launch(["/usr/bin/bash", root.api, "records"].concat(job.names))
   }
 
   function setCard(id, sections, error, done) {
@@ -398,17 +395,20 @@ Item {
     onTriggered: { root.forgetCards(); root.refresh() }
   }
 
-  Process {
+  // Every run settles once, even one that never starts or never ends
+  // (BoundedProcess.qml): otherwise a queue could wait on it for good, with the
+  // list loading or a card spinning.
+  BoundedProcess {
     id: eventsProcess
     property string org: ""
     property int generation: 0
-    running: false
-    command: []
+    deadline: Model.commandDeadlineSec
     clearEnvironment: true
     environment: Model.environment
     stdout: StdioCollector { id: eventsOut; waitForEnd: true }
     stderr: StdioCollector { id: eventsErr; waitForEnd: true }
-    onExited: function(exitCode) {
+    onReleased: root.fetchNext()
+    onSettled: function(exitCode, timedOut) {
       if (eventsProcess.generation !== root.generation) { Qt.callLater(root.fetchNext); return }
       root.pending.shift()
       // A parser exception here would skip fetchNext and leave the service
@@ -455,7 +455,7 @@ Item {
           error = "Unreadable response for " + Model.promotionById(eventsProcess.org).label + "."
         }
       } else {
-        error = Model.errorMessage(eventsErr.text, exitCode)
+        error = Model.errorMessage(eventsErr.text, exitCode, timedOut)
       }
       if (error !== "") {
         var f = root.failures
@@ -467,16 +467,18 @@ Item {
     }
   }
 
-  Process {
+  BoundedProcess {
     id: cardProcess
     property var job: null
-    running: false
-    command: []
+    deadline: Model.commandDeadlineSec
     clearEnvironment: true
     environment: Model.environment
     stdout: StdioCollector { id: cardOut; waitForEnd: true }
     stderr: StdioCollector { id: cardErr; waitForEnd: true }
-    onExited: function(exitCode) {
+    onReleased: root.nextCard()
+    // A run that failed, never started or timed out (exit code not 0) leaves the
+    // card estimated from start times, and the queue moves on.
+    onSettled: function(exitCode, timedOut) {
       var job = cardProcess.job
       if (job) {
         var sections = [], ok = false, segments = ({})
@@ -503,21 +505,24 @@ Item {
     }
   }
 
-  Process {
+  BoundedProcess {
     id: recordsProcess
     property var job: null
-    running: false
-    command: []
+    deadline: Model.commandDeadlineSec
     clearEnvironment: true
     environment: Model.environment
     stdout: StdioCollector { id: recordsOut; waitForEnd: true }
-    onExited: function(exitCode) {
+    onReleased: root.nextRecords()
+    onSettled: function(exitCode, timedOut) {
       var job = recordsProcess.job
       if (job) {
         try {
           // A failed run (exit 1: everything blocked) still settles the card:
-          // whoever has no record by now is shown as blocked or N/A.
-          var found = recordsOut.text.length <= Model.maxResponseChars ? Model.parseRecords(recordsOut.text) : ({})
+          // whoever has no record by now is shown as blocked or N/A. So does
+          // one that never started or timed out, whose output, if any, may be
+          // cut anywhere and is not read.
+          var usable = exitCode >= 0 && !timedOut && recordsOut.text.length <= Model.maxResponseChars
+          var found = usable ? Model.parseRecords(recordsOut.text) : ({})
           // A name the script never answered for counts as blocked.
           job.names.forEach(function(n) { if (!found[n]) found[n] = "blocked" })
           var all = {}
@@ -577,49 +582,90 @@ Item {
     }
   }
 
+  // The cache files are only ever written through these FileViews, never read:
+  // a FileView reads the whole file into the shell process before anything can
+  // bound it. Reads go through cacheRead below.
   FileView {
     id: cardsFile
     path: root.cacheDir + "/cards.json"
+    preload: false
     printErrors: false
-    onLoaded: {
-      var kept = Model.parseCardCache(text(), Date.now())
-      var segs = {}, all = {}, times = {}, blocked = {}, until = {}
-      var k
-      for (k in kept.segments) segs[k] = kept.segments[k]
-      for (k in root.segmentCache) segs[k] = root.segmentCache[k]
-      for (k in root.records) all[k] = root.records[k]
-      for (k in root.recordTimes) times[k] = root.recordTimes[k]
-      for (k in root.blockedAt) blocked[k] = root.blockedAt[k]
-      for (k in root.recordUntil) until[k] = root.recordUntil[k]
-      for (k in kept.records) {
-        if (all[k] !== undefined) continue
-        all[k] = kept.records[k].value
-        if (all[k] === "blocked") blocked[k] = kept.records[k].at
-        else times[k] = kept.records[k].at
-        if (kept.records[k].until !== undefined) until[k] = kept.records[k].until
-      }
-      root.segmentCache = segs
-      root.records = all
-      root.recordTimes = times
-      root.blockedAt = blocked
-      root.recordUntil = until
-    }
   }
 
   FileView {
     id: cacheFile
     path: root.cacheDir + "/events.json"
+    preload: false
     printErrors: false
-    onLoaded: {
-      var cached = Model.parseCache(text())
-      if (!cached || root.events.length > 0) return
-      root.events = Model.forOrganizations(Model.upcomingOnly(cached.events, new Date(), root.keepFinishedDays),
-        Model.selectedOrganizations(root.organizations))
-      root.fetchedAt = cached.fetchedAt
-      // A fetch that already failed before the cache was read.
-      root.offline = !root.loading && root.errorText !== ""
+  }
+
+  // Reads each cache file in a separate process, capped in bytes and time (see
+  // Model.cacheFileMaxBytes): one byte past the cap is asked for, so a file over
+  // it is recognized and ignored whole. The entry caps of the parsers still apply
+  // to what fits. Events first, then cards.
+  property var cacheReads: []
+  function readCaches() {
+    root.cacheReads = [
+      { path: root.cacheDir + "/events.json", load: root.loadEventCache },
+      { path: root.cacheDir + "/cards.json", load: root.loadCardCache }
+    ]
+    root.nextCacheRead()
+  }
+  function nextCacheRead() {
+    if (cacheRead.running || root.cacheReads.length === 0) return
+    cacheRead.job = root.cacheReads.shift()
+    cacheRead.launch(["/usr/bin/head", "-c", String(Model.cacheFileMaxBytes + 1), "--", cacheRead.job.path])
+  }
+
+  BoundedProcess {
+    id: cacheRead
+    property var job: null
+    deadline: Model.cacheReadDeadlineSec
+    killAfter: 1
+    clearEnvironment: true
+    environment: Model.environment
+    stdout: StdioCollector { id: cacheReadOut; waitForEnd: true }
+    onReleased: root.nextCacheRead()
+    onSettled: function(exitCode, timedOut) {
+      var text = Model.boundedCacheText(cacheReadOut.text, exitCode, timedOut)
+      try { if (text !== "" && cacheRead.job) cacheRead.job.load(text) } catch (e) {}
+      Qt.callLater(root.nextCacheRead)
     }
   }
 
-  Component.onCompleted: root.refresh()
+  function loadCardCache(text) {
+    var kept = Model.parseCardCache(text, Date.now())
+    var segs = {}, all = {}, times = {}, blocked = {}, until = {}
+    var k
+    for (k in kept.segments) segs[k] = kept.segments[k]
+    for (k in root.segmentCache) segs[k] = root.segmentCache[k]
+    for (k in root.records) all[k] = root.records[k]
+    for (k in root.recordTimes) times[k] = root.recordTimes[k]
+    for (k in root.blockedAt) blocked[k] = root.blockedAt[k]
+    for (k in root.recordUntil) until[k] = root.recordUntil[k]
+    for (k in kept.records) {
+      if (all[k] !== undefined) continue
+      all[k] = kept.records[k].value
+      if (all[k] === "blocked") blocked[k] = kept.records[k].at
+      else times[k] = kept.records[k].at
+      if (kept.records[k].until !== undefined) until[k] = kept.records[k].until
+    }
+    root.segmentCache = segs
+    root.records = all
+    root.recordTimes = times
+    root.blockedAt = blocked
+    root.recordUntil = until
+  }
+
+  function loadEventCache(text) {
+    var cached = Model.parseCache(text)
+    if (!cached || root.events.length > 0) return
+    root.events = Model.forOrganizations(Model.upcomingOnly(cached.events, new Date(), root.keepFinishedDays),
+      Model.selectedOrganizations(root.organizations))
+    root.fetchedAt = cached.fetchedAt
+    // A fetch that already failed before the cache was read.
+    root.offline = !root.loading && root.errorText !== ""
+  }
+
+  Component.onCompleted: { root.readCaches(); root.refresh() }
 }

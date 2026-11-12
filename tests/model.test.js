@@ -1606,3 +1606,60 @@ test("parseScoreboard bounds nested arrays before expanding them", () => {
   assert.deepStrictEqual(out[0].fights[0].fighters.map(f => f.name), ["A", "B"]);
   assert.strictEqual(M.sortedFighters(big(150000)).length, 2);
 });
+
+test("pastedQuery flattens control characters and clips to the room left", () => {
+  assert.strictEqual(M.pastedQuery("Jon\r\nJones\t\u0000x y"), "Jon Jones x y");
+  assert.strictEqual(M.pastedQuery("a".repeat(5000)).length, M.maxQueryLength);
+  assert.strictEqual(M.pastedQuery("abcdef", 3), "abc");
+  assert.strictEqual(M.pastedQuery("abc", -4), "");
+  assert.strictEqual(M.pastedQuery("abc", 1000), "abc");
+  // Clipped by character, never through the middle of a surrogate pair.
+  assert.strictEqual(M.pastedQuery("😀😀😀", 2), "😀😀");
+  assert.strictEqual(M.pastedQuery(null), "");
+});
+
+test("filterEvents only reads the first maxQueryLength characters of a query", () => {
+  const events = [{ name: "UFC 400", fights: [] }];
+  assert.strictEqual(M.filterEvents(events, "ufc" + " ".repeat(M.maxQueryLength) + "nomatch").length, 1);
+});
+
+test("pasteEnvironment adds only the Wayland display selection", () => {
+  assert.strictEqual(M.pasteEnvironment.XDG_RUNTIME_DIR, null);
+  assert.strictEqual(M.pasteEnvironment.WAYLAND_DISPLAY, null);
+  assert.ok(!("WAYLAND_SOCKET" in M.pasteEnvironment));
+  for (const k in M.environment) assert.strictEqual(M.pasteEnvironment[k], M.environment[k]);
+  assert.strictEqual(Object.keys(M.pasteEnvironment).length, Object.keys(M.environment).length + 2);
+});
+
+test("errorMessage names a timed-out command whatever it printed", () => {
+  assert.strictEqual(M.errorMessage("curl: (28) Operation timed out\n", 124, true), "No answer within 5 minutes.");
+  assert.strictEqual(M.errorMessage("", 124, false), "Request failed (124)");
+  assert.ok(M.commandDeadlineSec >= 120 && M.commandDeadlineSec <= 600);
+});
+
+test("utf8Length counts UTF-8 bytes, never fewer than were read", () => {
+  assert.strictEqual(M.utf8Length(""), 0);
+  assert.strictEqual(M.utf8Length("abc"), 3);
+  assert.strictEqual(M.utf8Length("José"), 5);
+  assert.strictEqual(M.utf8Length("€"), 3);
+  assert.strictEqual(M.utf8Length("🥊"), 4);
+  for (const s of ["Žilina — Ostrava", "東京 🥊 x", "��"]) assert.strictEqual(M.utf8Length(s), Buffer.byteLength(s, "utf8"));
+  // A lone surrogate becomes U+FFFD (3 bytes) when encoded.
+  assert.strictEqual(M.utf8Length("\uD83E"), 3);
+});
+
+test("boundedCacheText ignores a cache read that failed, timed out or passed the cap", () => {
+  const max = M.cacheFileMaxBytes;
+  assert.ok(max >= 1024 * 1024 && max <= 16 * 1024 * 1024);
+  assert.ok(M.cacheReadDeadlineSec > 0 && M.cacheReadDeadlineSec <= 30);
+  assert.strictEqual(M.boundedCacheText('{"version":1}', 0, false), '{"version":1}');
+  assert.strictEqual(M.boundedCacheText('{"version":1}', 1, false), "");
+  assert.strictEqual(M.boundedCacheText('{"version":1}', -1, false), "");
+  assert.strictEqual(M.boundedCacheText('{"version":1}', 0, true), "");
+  assert.strictEqual(M.boundedCacheText(null, 0, false), "");
+  // Exactly at the cap is read; one byte past it (what head -c cap+1 returns
+  // for a larger file) is refused whole, in characters or in bytes.
+  assert.strictEqual(M.boundedCacheText("x".repeat(max), 0, false).length, max);
+  assert.strictEqual(M.boundedCacheText("x".repeat(max + 1), 0, false), "");
+  assert.strictEqual(M.boundedCacheText("é".repeat(max / 2) + "x", 0, false), "");
+});

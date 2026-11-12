@@ -11,7 +11,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Install dependencies
-        run: pacman -Syu --noconfirm --needed git nodejs curl bash gawk sed
+        run: pacman -Syu --noconfirm --needed git nodejs curl bash gawk sed coreutils qt6-declarative
       - uses: actions/checkout@v4
       - name: Run tests
         run: tests/run

@@ -11,6 +11,7 @@ Once a fight is over, the winner gets a green check, the loser is dimmed, and th
 
 - Omarchy with the Quickshell-based shell (`omarchy-shell`)
 - `curl` and `bash`
+- `wl-paste` (`wl-clipboard`, shipped with Omarchy) to paste into the search box
 - A Nerd Font in the bar (the glyph is `nf-md-boxing_glove`, U+F0B65)
 - For the tests only: `node`
 
@@ -46,9 +47,9 @@ Open the widget's settings in the Omarchy shell (or edit its entry in
   `r` refreshes, `Esc` goes back, then closes.
 - On a card, `↑`/`↓` scroll and `←` goes back.
 
-Logos are ESPN's league logos for UFC and PFL, the Wikipedia logos for Cage Warriors
-(emblem only, on a dark tile) and KSW, ARES's own logo, the Wikimedia Commons logo for Oktagon, the Hexagone MMA emblem from Wikimedia Commons, the ACA logo from Wikipedia and the ONE Championship logo from Wikipedia, bundled in `assets/`; they remain the
-property of their owners.
+Each event shows its promotion's logo, bundled in `assets/`. They remain the
+property and trademarks of their owners; see [Credits and sources](#credits-and-sources)
+for where each one comes from and under what terms.
 
 ## Where the data comes from
 
@@ -184,8 +185,24 @@ what it accepts back are both bounded:
   followed only to https, and the service refuses to parse anything larger
   still. Every open-ended match in the parsers is bounded, so a page built to
   stall them (Wikipedia's are editable by anyone) costs milliseconds, not minutes.
+- Each `bin/mma-api` command has five minutes in all, whatever its requests
+  do (`BoundedProcess.qml`). It runs under `timeout` in a process group of its
+  own: past the deadline every process in it gets SIGTERM, then SIGKILL, and
+  anything still left in the group after a failed run is killed too. A command
+  that cannot even start, or never ends, still settles: the list stops
+  loading, the card falls back to start times, and the next one in the queue
+  goes ahead. What a timed-out command printed is never parsed.
+- The two cache files are read in a separate process, at most 4 MB and 10
+  seconds each; a file over that is ignored whole, as if it were missing. They
+  are only ever written from the shell, never read there.
 - An event link opens in the browser only when it is an https URL on one of
   the sources' own hosts.
+- Pasting into the search box (Ctrl+V, Shift+Insert, the Paste key, middle
+  click) never goes through Qt's own clipboard read, which pulls the whole
+  selection into the shell process before any limit applies. `bin/mma-paste`
+  reads it in a separate process instead, capped at 512 bytes and one second;
+  anything larger or slower is dropped. The right-click menu is off, and a
+  search is at most 100 characters.
 
 ## Tests
 
@@ -194,7 +211,10 @@ tests/run
 ```
 
 Runs `Model.js` against saved ESPN and Wikipedia responses in `tests/fixtures/` and
-checks `bin/mma-api`'s argument handling. No network or display needed.
+checks `bin/mma-api`'s argument handling, `bin/mma-paste`'s byte and time caps
+against a fake `wl-paste`, and, with `qmltestrunner` (`qt6-declarative`)
+installed, that real paste keys and clicks in the search box never reach Qt's
+native paste. No network or display needed.
 
 ## Uninstall
 
@@ -209,6 +229,51 @@ If you installed by hand, delete `~/.config/omarchy/plugins/anavarre.mma` instea
 running `omarchy plugin remove`. Also remove any leftover `anavarre.mma` entry from
 `~/.config/omarchy/shell.json`.
 
+## Credits and sources
+
+The MIT license below covers this project's own code and text. It does not cover
+the logos in `assets/` or the saved responses in `tests/fixtures/`, which are
+third-party material under the terms listed here. Every logo is a trademark of
+its promotion, whatever the copyright status of the image; it is used only to
+identify that promotion's events, and no endorsement is implied.
+
+### Logos (`assets/`)
+
+Every bundled copy is resized to 128×128 and re-encoded as an 8-bit palette PNG.
+Other changes are listed per file. Licenses are as stated on each source page
+when checked (November 2026).
+
+| File | Source | License as stated at the source | Changes |
+|---|---|---|---|
+| `ufc.png` | ESPN league logo, [a.espncdn.com/i/teamlogos/leagues/500/ufc.png](https://a.espncdn.com/i/teamlogos/leagues/500/ufc.png) | None stated. Logo © UFC (Zuffa, LLC) | Resized |
+| `pfl.png` | ESPN league logo, [a.espncdn.com/i/teamlogos/leagues/500/pfl.png](https://a.espncdn.com/i/teamlogos/leagues/500/pfl.png) | None stated. Logo © Professional Fighters League | Resized |
+| `cw.png` | [File:Cage_Warriors_logo.png](https://commons.wikimedia.org/wiki/File:Cage_Warriors_logo.png), Wikimedia Commons. Author: Cage Warriors; uploaded by AddedUpdatePoster | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | Cropped to the circular emblem, placed on a dark tile. This derivative is likewise CC BY-SA 4.0 |
+| `ksw.png` | [File:Konfrontacja_Sztuk_Walki_logo.png](https://commons.wikimedia.org/wiki/File:Konfrontacja_Sztuk_Walki_logo.png), Wikimedia Commons | Public domain (PD-textlogo) | Resized |
+| `ares.png` | ARES Fighting Championship's site logo, [aresfighting.com](https://www.aresfighting.com/) | All rights reserved ([legal notice](https://www.aresfighting.com/legal-notice)) | Resized |
+| `oktagon.png` | [File:Oktagon_logo.png](https://commons.wikimedia.org/wiki/File:Oktagon_logo.png), Wikimedia Commons. Author: Jakub.schroder | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | Placed on a dark tile. This derivative is likewise CC BY-SA 4.0 |
+| `hxmma.png` | [File:Hexagone_MMA_Winamax_logo.svg](https://commons.wikimedia.org/wiki/File:Hexagone_MMA_Winamax_logo.svg), Wikimedia Commons | Public domain (PD-logo), trademarked | Cropped to the hexagon emblem, rasterized |
+| `aca.png` | [File:Absolute_Championship_Akhmat_logo.png](https://en.wikipedia.org/wiki/File:Absolute_Championship_Akhmat_logo.png), English Wikipedia | Public domain (PD-textlogo) | Resized |
+| `one.png` | [File:ONE_Championship_company_logo.png](https://en.wikipedia.org/wiki/File:ONE_Championship_company_logo.png), English Wikipedia | Public domain in the US (PD-textlogo, PD-ineligible-USonly), trademarked | Resized |
+
+### Test fixtures (`tests/fixtures/`)
+
+Saved responses, kept so the parsers can be tested offline. They are read by the
+tests only; the plugin itself never reads them.
+
+| File | Source | Terms |
+|---|---|---|
+| `cw-2026-wiki.json` | Wikipedia, [2026 in Cage Warriors](https://en.wikipedia.org/wiki/2026_in_Cage_Warriors) ([history](https://en.wikipedia.org/w/index.php?title=2026_in_Cage_Warriors&action=history)), wikitext via the MediaWiki API, November 2026 | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), Wikipedia contributors |
+| `ksw-2026-wiki.json` | Wikipedia, [2026 in Konfrontacja Sztuk Walki](https://en.wikipedia.org/wiki/2026_in_Konfrontacja_Sztuk_Walki) ([history](https://en.wikipedia.org/w/index.php?title=2026_in_Konfrontacja_Sztuk_Walki&action=history)), as above | CC BY-SA 4.0, Wikipedia contributors |
+| `oktagon-2026-wiki.json` | Wikipedia, [2026 in Oktagon MMA](https://en.wikipedia.org/wiki/2026_in_Oktagon_MMA) ([history](https://en.wikipedia.org/w/index.php?title=2026_in_Oktagon_MMA&action=history)), as above | CC BY-SA 4.0, Wikipedia contributors |
+| `aca-2026-wiki.json` | Wikipedia, [2026 in Absolute Championship Akhmat](https://en.wikipedia.org/wiki/2026_in_Absolute_Championship_Akhmat) ([history](https://en.wikipedia.org/w/index.php?title=2026_in_Absolute_Championship_Akhmat&action=history)), as above | CC BY-SA 4.0, Wikipedia contributors |
+| `one-2026-wiki.json` | Wikipedia, [2026 in ONE Championship](https://en.wikipedia.org/wiki/2026_in_ONE_Championship) ([history](https://en.wikipedia.org/w/index.php?title=2026_in_ONE_Championship&action=history)), an excerpt of its wikitext in the API's response shape | CC BY-SA 4.0, Wikipedia contributors |
+| `ufc-scoreboard.json`, `ufc-334-cards.json`, `pfl-scoreboard.json`, `pfl-lyon-scoreboard.json` | ESPN's public API (`site.api.espn.com`, `sports.core.api.espn.com`) | None stated; © ESPN |
+| `ufc-334-site.html` | An event page of [ufc.com](https://www.ufc.com/events) | None stated; © UFC |
+| `pfl-site-lyon.html` | An event page of [pflmma.com](https://pflmma.com/events) | None stated; © Professional Fighters League |
+| `ares-2026.json` | Listing, fight-card and result pages of [aresfighting.com](https://www.aresfighting.com/events/) | All rights reserved ([legal notice](https://www.aresfighting.com/legal-notice)) |
+| `hxmma-2026.json` | Hexagone MMA's [Sherdog organization page](https://www.sherdog.com/organizations/Hexagone-MMA-16693) and its event pages | None stated; © Sherdog |
+
 ## License
 
-MIT. See [LICENSE.md](LICENSE.md).
+MIT, for this project's own code and text. See [LICENSE.md](LICENSE.md), and
+[Credits and sources](#credits-and-sources) for the bundled third-party material.

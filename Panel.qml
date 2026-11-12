@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -229,7 +230,45 @@ Panel {
     function openUrl(url) {}
   }
 
+  // Pasting into the search box goes through bin/mma-paste (byte cap, hard
+  // deadline, separate process), never through Qt's own clipboard read, which
+  // runs in the shell process without bounds; see SearchField.qml. One read at
+  // a time: a paste while one is in flight is dropped. pasteEpoch is bumped
+  // whenever a read in flight stops being wanted (the panel closed or the
+  // box lost focus), so a late answer is thrown away.
+  property int pasteEpoch: 0
+  function pasteIntoSearch(primary) {
+    if (pasteProcess.armed || !root.opened) return
+    pasteProcess.born = root.pasteEpoch
+    pasteProcess.command = ["/usr/bin/bash", Model.localPath(Qt.resolvedUrl("bin/mma-paste"))].concat(primary ? ["primary"] : [])
+    pasteProcess.armed = true
+    pasteProcess.running = true
+  }
+  function cancelPaste() {
+    root.pasteEpoch++
+    if (pasteProcess.armed) pasteProcess.running = false
+  }
+
+  Process {
+    id: pasteProcess
+    property bool armed: false
+    property int born: 0
+    running: false
+    command: []
+    clearEnvironment: true
+    environment: Model.pasteEnvironment
+    stdout: StdioCollector { id: pasteOut; waitForEnd: true }
+    // Admission reopens however the read ends, killed by cancelPaste() included.
+    onRunningChanged: if (!running) pasteProcess.armed = false
+    onExited: function(exitCode) {
+      pasteProcess.armed = false
+      if (pasteProcess.born !== root.pasteEpoch || !root.opened || !searchField.activeFocus) return
+      if (exitCode === 0) searchField.insertPasted(pasteOut.text)
+    }
+  }
+
   onOpenedChanged: {
+    if (!root.opened) root.cancelPaste()
     if (root.opened) {
       root.eventId = ""
       root.showSettings = false
@@ -641,7 +680,7 @@ Panel {
           // Dropdown assigns its own value on pick; keep it following the filter ("g" cycles it too).
           Binding { target: orgDropdown; property: "value"; value: root.activeOrg }
 
-          TextField {
+          SearchField {
             id: searchField
             width: parent.width - (orgDropdown.visible ? orgDropdown.width + searchRow.spacing : 0)
             foreground: root.foreground
@@ -650,6 +689,8 @@ Panel {
             placeholderText: "Search events or fighters"
             text: root.query
             onTextChanged: if (root.query !== text) root.query = text
+            onPasteRequested: function(primary) { root.pasteIntoSearch(primary) }
+            onActiveFocusChanged: if (!activeFocus) root.cancelPaste()
             Keys.onPressed: function(event) {
               if (event.key === Qt.Key_Down) { root.moveSelection(1); event.accepted = true }
               else if (event.key === Qt.Key_Up) { root.moveSelection(-1); event.accepted = true }
