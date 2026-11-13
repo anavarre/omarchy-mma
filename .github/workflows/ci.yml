@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -13,5 +17,47 @@ jobs:
       - name: Install dependencies
         run: pacman -Syu --noconfirm --needed git nodejs curl bash gawk sed coreutils qt6-declarative
       - uses: actions/checkout@v4
-      - name: Run tests
-        run: tests/run
+      # The report names the commit that was actually checked out and tested, so
+      # a run can be tied to a commit from its artifact alone.
+      - name: Run tests and write the validation report
+        shell: bash
+        run: |
+          set -uo pipefail
+          git config --global --add safe.directory "$PWD"
+          commit=$(git rev-parse HEAD)
+          worktree=$([ -z "$(git status --porcelain)" ] && echo clean || echo MODIFIED)
+          report=validation-report.txt
+          {
+            echo "Validation report"
+            echo "repository:  $GITHUB_REPOSITORY"
+            echo "commit:      $commit"
+            echo "tree:        $(git rev-parse 'HEAD^{tree}')"
+            echo "ref:         $GITHUB_REF"
+            echo "event:       $GITHUB_EVENT_NAME (GITHUB_SHA $GITHUB_SHA)"
+            echo "run:         $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID (attempt $GITHUB_RUN_ATTEMPT)"
+            echo "started:     $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "worktree:    $worktree"
+            echo "node:        $(node --version)"
+            echo "qt6-declarative: $(pacman -Q qt6-declarative | cut -d' ' -f2)"
+            echo
+            echo "---- tests/run ----"
+          } > "$report"
+          tests/run 2>&1 | tee -a "$report"
+          status=${PIPESTATUS[0]}
+          {
+            echo "---- end ----"
+            echo "exit status: $status"
+            echo "result:      $([ "$status" -eq 0 ] && echo PASS || echo FAIL)"
+            echo "finished:    $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$report"
+          { echo '```'; cat "$report"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "COMMIT=$commit" >> "$GITHUB_ENV"
+          exit "$status"
+      - name: Upload the validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-report-${{ env.COMMIT || github.sha }}
+          path: validation-report.txt
+          if-no-files-found: error
+          retention-days: 90

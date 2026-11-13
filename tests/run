@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs every portable check: Model.js unit tests against saved ESPN, Wikipedia and ARES responses,
+# Runs every portable check: Model.js unit tests against saved Wikipedia responses and hand-written
+# ESPN, ufc.com, pflmma.com, ARES and Sherdog ones (tests/fixtures.js),
 # a syntax and argument check of bin/mma-api, bin/mma-paste against a fake
 # wl-paste, and SearchField.qml's paste routing under qmltestrunner. None of it needs Omarchy, a
 # display or the network.

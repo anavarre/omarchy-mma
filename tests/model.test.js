@@ -21,8 +21,12 @@ for (const name of Object.keys(ctx)) {
     : ctx[name];
 }
 
+// Saved Wikipedia responses (CC BY-SA, credited in the README).
 const fixture = (name) => fs.readFileSync(__dirname + "/fixtures/" + name, "utf8");
-const ufc = M.parseScoreboard(fixture("ufc-scoreboard.json"), "ufc");
+// Responses written for these tests, in the shape of the sources that publish
+// no reuse terms: ESPN, ufc.com, pflmma.com, aresfighting.com and Sherdog.
+const F = require("./fixtures.js");
+const ufc = M.parseScoreboard(F.ufcScoreboard, "ufc");
 const byName = (events, part) => events.find((e) => e.name.includes(part));
 
 test("selectedOrganizations defaults to UFC only", () => {
@@ -43,12 +47,29 @@ test("toggleOrganization adds and removes enabled promotions only", () => {
   assert.deepStrictEqual(M.toggleOrganization(["ufc"], "bellator", true), ["ufc"]);
 });
 
-test("UFC and PFL have bundled logos, and PFL is off by default", () => {
+test("UFC has a bundled logo, PFL a text tag, and PFL is off by default", () => {
   assert.strictEqual(M.logoFor("ufc"), "assets/ufc.png");
-  assert.strictEqual(M.logoFor("pfl"), "assets/pfl.png");
+  // No freely licensed PFL logo is bundled: the list shows its name instead.
+  assert.strictEqual(M.logoFor("pfl"), "");
+  assert.strictEqual(M.tagFor("pfl"), "PFL");
   assert.strictEqual(M.logoFor("bellator"), "");
   assert.deepStrictEqual(M.selectedOrganizations(undefined), ["ufc"]);
-  for (const f of ["ufc", "pfl"]) assert.ok(fs.existsSync(__dirname + "/../assets/" + f + ".png"));
+});
+
+// Every file in assets/ and tests/fixtures/ is third-party material, and the
+// README's "Credits and sources" has to say where each came from and on what
+// terms: one that is missing there, or listed there but gone, fails here.
+test("bundled logos and saved responses are exactly the ones the README credits", () => {
+  const readme = fs.readFileSync(__dirname + "/../README.md", "utf8");
+  const credits = readme.slice(readme.indexOf("## Credits and sources"), readme.indexOf("## License"));
+  const [logoTable, fixtureTable] = credits.split("### Test fixtures");
+  const credited = (table) => [...table.matchAll(/^\| `([^`]+)` \|/gm)].map((m) => m[1]).sort();
+  const logos = fs.readdirSync(__dirname + "/../assets").sort();
+  assert.deepStrictEqual(credited(logoTable), logos);
+  assert.deepStrictEqual(Array.from(M.promotions, (p) => p.logo).filter(Boolean).map((l) => l.replace("assets/", "")).sort(), logos);
+  assert.deepStrictEqual(credited(fixtureTable), fs.readdirSync(__dirname + "/fixtures").sort());
+  // Nothing bundled is there without stated terms.
+  assert.doesNotMatch(credits, /none stated|all rights reserved/i);
 });
 
 test("forOrganizations keeps only selected promotions' events", () => {
@@ -163,7 +184,7 @@ test("parseScoreboard returns date-ordered events with metadata", () => {
   assert.strictEqual(e.orgLabel, "UFC");
   assert.strictEqual(e.fightCount, 14);
   assert.ok(e.venue.length > 0);
-  assert.strictEqual(M.headlinerText(e), "C. Gane vs J. Hokit");
+  assert.strictEqual(M.headlinerText(e), "M. Dolan vs J. Hale");
 });
 
 test("parseScoreboard tolerates garbage and flags finished events", () => {
@@ -205,14 +226,14 @@ test("visibleEvents puts an unfinished event with an old date after the finished
 });
 
 test("the challenger is always on the right, whatever order ESPN lists them in", () => {
-  const e = byName(ufc, "Moicano");
-  // The scoreboard lists Lisboa (order 2) before Szabova (order 1).
+  const e = byName(ufc, "Varga");
+  // The scoreboard lists Quispe (order 2) before Kovářová (order 1).
   const first = e.fights[0];
-  assert.strictEqual(first.fighters[0].name, "Lucia Szabová");
-  assert.strictEqual(first.fighters[1].name, "Tainara Lisboa");
+  assert.strictEqual(first.fighters[0].name, "Ilse Kovářová");
+  assert.strictEqual(first.fighters[1].name, "Marta Quispe");
   const main = e.fights[e.fights.length - 1];
-  assert.strictEqual(main.fighters[0].name, "Renato Moicano");
-  assert.strictEqual(main.fighters[1].name, "Tom Nolan");
+  assert.strictEqual(main.fighters[0].name, "Tibor Varga");
+  assert.strictEqual(main.fighters[1].name, "Emeka Okoro");
   // Every fight on every fixture card follows the rule.
   for (const ev of ufc) for (const f of ev.fights) assert.ok(f.fighters.length === 2);
 });
@@ -244,26 +265,26 @@ test("fighter records and TBA", () => {
 });
 
 test("parseSegments reads the core API's card segments", () => {
-  const seg = M.parseSegments(fixture("ufc-334-cards.json"));
+  const seg = M.parseSegments(F.ufcCards);
   assert.strictEqual(Object.keys(seg).length, 14);
-  assert.strictEqual(seg["401913646"].segment, "main");
-  assert.strictEqual(seg["401913646"].matchNumber, 1);
-  assert.strictEqual(seg["401932013"].segment, "prelims2");
+  assert.strictEqual(seg["910001"].segment, "main");
+  assert.strictEqual(seg["910001"].matchNumber, 1);
+  assert.strictEqual(seg["910014"].segment, "prelims2");
   assert.deepStrictEqual(M.parseSegments("nope"), {});
 });
 
 test("buildCard puts the main card first, prelims after, main event on top", () => {
   const e = byName(ufc, "UFC 334");
-  const card = M.buildCard(e, M.parseSegments(fixture("ufc-334-cards.json")));
+  const card = M.buildCard(e, M.parseSegments(F.ufcCards));
   assert.deepStrictEqual(card.map((s) => s.label), ["Main Card", "Prelims", "Early Prelims"]);
   assert.deepStrictEqual(card.map((s) => s.fights.length), [5, 4, 5]);
   const main = card[0].fights;
-  assert.match(M.fightTitle(main[0]), /Gane vs .*Hokit/);
+  assert.match(M.fightTitle(main[0]), /Dolan vs .*Hale/);
 });
 
 test("buildCard orders by matchNumber within a section", () => {
   const e = byName(ufc, "UFC 334");
-  const card = M.buildCard(e, M.parseSegments(fixture("ufc-334-cards.json")));
+  const card = M.buildCard(e, M.parseSegments(F.ufcCards));
   for (const s of card) {
     const nums = s.fights.map((f) => f.matchNumber);
     assert.deepStrictEqual(nums, nums.slice().sort((a, b) => a - b));
@@ -273,20 +294,20 @@ test("buildCard orders by matchNumber within a section", () => {
 
 test("buildCard keeps the challenger on the right in every section", () => {
   const e = byName(ufc, "UFC 334");
-  const card = M.buildCard(e, M.parseSegments(fixture("ufc-334-cards.json")));
+  const card = M.buildCard(e, M.parseSegments(F.ufcCards));
   const main = card[0].fights[0];
-  assert.strictEqual(main.fighters[0].shortName, "C. Gane");
-  assert.strictEqual(main.fighters[1].shortName, "J. Hokit");
+  assert.strictEqual(main.fighters[0].shortName, "M. Dolan");
+  assert.strictEqual(main.fighters[1].shortName, "J. Hale");
 });
 
 test("buildCard falls back to start times when segments are missing", () => {
-  const e = byName(ufc, "Moicano");
+  const e = byName(ufc, "Varga");
   const card = M.buildCard(e, {});
   assert.deepStrictEqual(card.map((s) => s.label), ["Main Card", "Prelims"]);
   assert.strictEqual(card[0].fights.length, 5);
   assert.strictEqual(card[1].fights.length, 7);
   // The headliner leads the main card.
-  assert.strictEqual(M.fightTitle(card[0].fights[0]), "Renato Moicano vs Tom Nolan");
+  assert.strictEqual(M.fightTitle(card[0].fights[0]), "Tibor Varga vs Emeka Okoro");
 });
 
 test("buildCard with one start time is a single main card", () => {
@@ -306,27 +327,27 @@ test("events carry their ESPN page", () => {
 });
 
 test("sectionStart and isMainEvent", () => {
-  const card = M.buildCard(byName(ufc, "Moicano"), {});
+  const card = M.buildCard(byName(ufc, "Varga"), {});
   assert.strictEqual(M.sectionStart(card[0]), "2026-11-01T00:00Z");
   assert.strictEqual(M.sectionStart(card[1]), "2026-10-31T21:00Z");
   assert.strictEqual(M.sectionStart({ fights: [] }), "");
   assert.ok(M.isMainEvent(card[0], 0));
   assert.ok(!M.isMainEvent(card[0], 1));
   assert.ok(!M.isMainEvent(card[1], 0));
-  const seg = M.buildCard(byName(ufc, "UFC 334"), M.parseSegments(fixture("ufc-334-cards.json")));
+  const seg = M.buildCard(byName(ufc, "UFC 334"), M.parseSegments(F.ufcCards));
   assert.ok(M.isMainEvent(seg[0], 0));
   assert.ok(!M.isMainEvent(seg[1], 0));
 });
 
 test("PFL fixture parses and builds a card", () => {
-  const pfl = M.parseScoreboard(fixture("pfl-scoreboard.json"), "pfl");
+  const pfl = M.parseScoreboard(F.pflScoreboard, "pfl");
   assert.strictEqual(pfl.length, 1);
   assert.strictEqual(pfl[0].orgLabel, "PFL");
   assert.ok(M.buildCard(pfl[0], {}).length >= 1);
 });
 
 test("mergeEvents interleaves organizations by date and limits", () => {
-  const pfl = M.parseScoreboard(fixture("pfl-scoreboard.json"), "pfl");
+  const pfl = M.parseScoreboard(F.pflScoreboard, "pfl");
   const merged = M.mergeEvents([ufc, pfl], 30);
   const dates = merged.map((e) => new Date(e.date).getTime());
   assert.deepStrictEqual(dates, dates.slice().sort((a, b) => a - b));
@@ -339,7 +360,7 @@ test("cache round-trips and rejects other versions", () => {
   const back = M.parseCache(text);
   assert.strictEqual(back.fetchedAt, 123);
   assert.strictEqual(back.events.length, ufc.length);
-  // Real ESPN data survives the sanitizer unchanged.
+  // A parsed scoreboard survives the sanitizer unchanged.
   assert.deepStrictEqual(back.events, ufc);
   assert.strictEqual(M.parseCache("{}"), null);
   assert.strictEqual(M.parseCache("junk"), null);
@@ -404,10 +425,10 @@ test("weightClassLabel and errorMessage", () => {
 });
 
 test("a title fight gets a crown next to the fight details", () => {
-  const segs = M.parseSegments(fs.readFileSync(__dirname + "/fixtures/ufc-334-cards.json", "utf8"));
+  const segs = M.parseSegments(F.ufcCards);
   const champs = Object.keys(segs).filter((id) => segs[id].champion);
   assert.strictEqual(champs.length, 2);
-  const f = { champion: true, fighters: [{ name: "Ciryl Gane" }, { name: "Josh Hokit" }] };
+  const f = { champion: true, fighters: [{ name: "Marek Dolan" }, { name: "Jonas Hale" }] };
   assert.strictEqual(M.crownFor(f), "👑 ");
   assert.strictEqual(M.crownFor({ champion: false, fighters: f.fighters }), "");
   assert.doesNotMatch(M.weightClassLabel({ weightClass: "Heavyweight", rounds: 5, champion: true }), /\uD83D/);
@@ -687,36 +708,36 @@ test("Oktagon never shares an event id with the other promotions", () => {
 
 // ------------------------------------------------------ Hexagone MMA (Sherdog)
 //
-// The event pages of Hexagone MMA's Sherdog organization page, as
-// bin/mma-api sherdog hxmma prints them (scripts and styles stripped).
+// Event pages in the shape of Hexagone MMA's on Sherdog, as bin/mma-api
+// sherdog hxmma prints them. Written for these tests (fixtures.js), not saved.
 
-const hx = M.parseSherdog(fixture("hxmma-2026.json"), "hxmma", Date.parse("2026-11-05T12:00:00Z"), 120);
+const hx = M.parseSherdog(F.hxmma, "hxmma", Date.parse("2026-11-05T12:00:00Z"), 120);
 
 test("Hexagone MMA: events are read in order, with venue and country", () => {
   assert.deepStrictEqual(hx.map((e) => e.shortName), ["HXMMA 46", "HXMMA 47", "HXMMA 48", "HXMMA 49"]);
   assert.strictEqual(hx[1].name, "Hexagone MMA 47");
-  assert.strictEqual(hx[1].venue, "Zenith Toulouse · Toulouse, France");
+  assert.strictEqual(hx[1].venue, "Halle Garonne · Toulouse, France");
   assert.strictEqual(hx[1].tz, "Europe/Paris");
   assert.ok(hx.every((e) => e.org === "hxmma" && e.orgTag === "HX" && e.inline && e.dateOnly && e.id.startsWith("88")));
-  assert.strictEqual(hx[0].url, "https://www.sherdog.com/events/HXMMA-46-Hexagone-MMA-46-Series-5-Rouen-113782");
+  assert.strictEqual(hx[0].url, "https://www.sherdog.com/events/HXMMA-46-Hexagone-MMA-46-Series-5-Rouen-900046");
 });
 
 test("Hexagone MMA: results show winners and methods, announced cards neither", () => {
   const done = hx[1];
   assert.ok(done.finished && done.fightCount === 11);
-  assert.deepStrictEqual(done.headliner.fighters.map((f) => [f.name, f.winner]), [["Nicolae Bivol", true], ["David Sipra", false]]);
+  assert.deepStrictEqual(done.headliner.fighters.map((f) => [f.name, f.winner]), [["Nicolae Ardelean", true], ["David Soria", false]]);
   assert.strictEqual(done.headliner.method, "TKO (Elbow and Punches)");
   assert.strictEqual(done.headliner.round, 1);
   assert.ok(done.fights.some((f) => f.method === "Split Decision"));
   const next = hx[3];
   assert.ok(!next.finished && next.fights.every((f) => !f.done && f.method === ""));
-  assert.strictEqual(next.headliner.fighters[0].name, "Theo Ulrich");
+  assert.strictEqual(next.headliner.fighters[0].name, "Theo Lambrecht");
   assert.strictEqual(next.headliner.fighters[0].record, "8-0-0");
   assert.ok(next.headliner.champion);
 });
 
 test("Hexagone MMA: events beyond the lookahead are dropped, junk is ignored", () => {
-  assert.strictEqual(M.parseSherdog(fixture("hxmma-2026.json"), "hxmma", Date.parse("2026-11-05T12:00:00Z"), 7).length, 3);
+  assert.strictEqual(M.parseSherdog(F.hxmma, "hxmma", Date.parse("2026-11-05T12:00:00Z"), 7).length, 3);
   assert.deepStrictEqual(M.parseSherdog("nope", "hxmma", NOW, 120), []);
   assert.deepStrictEqual(M.parseSherdog(JSON.stringify({ events: { "/x/../y": "<h1>a</h1>" } }), "hxmma", NOW, 120), []);
 });
@@ -794,11 +815,12 @@ test("ONE never shares an event id with the other promotions", () => {
 
 // ------------------------------------------------------------- ARES (own site)
 //
-// The saved pages of aresfighting.com, as bin/mma-api ares prints them: the
-// upcoming and past listings, the card page of five upcoming events and the
-// result page of ARES 44 (the one past event fetched).
+// Pages in the shape of aresfighting.com's, as bin/mma-api ares prints them:
+// the upcoming and past listings, the card page of five upcoming events and
+// the result page of ARES 44 (the one past event fetched). Written for these
+// tests (fixtures.js), not saved from the site.
 
-const aresPages = fixture("ares-2026.json");
+const aresPages = F.ares;
 const ares = M.parseAres(aresPages, NOW, 120);
 const aresEvent = (name) => ares.find((e) => e.name === name);
 
@@ -823,7 +845,7 @@ test("ARES: event details, with the start time from the card page in Paris time"
   assert.strictEqual(e.dateOnly, false);
   assert.strictEqual(e.finished, false);
   assert.strictEqual(e.tz, "Europe/Paris");
-  assert.strictEqual(e.url, "https://www.aresfighting.com/events/?competition=3368");
+  assert.strictEqual(e.url, "https://www.aresfighting.com/events/?competition=9045");
   assert.strictEqual(e.logo, "assets/ares.png");
   assert.strictEqual(e.orgLabel, "ARES");
   assert.strictEqual(e.orgTag, "ARES");
@@ -841,14 +863,14 @@ test("ARES: an announced card has its bouts, records and no results; main event 
   const sections = M.buildCard(e, {});
   assert.strictEqual(sections.length, 1);
   const main = sections[0].fights[0];
-  assert.deepStrictEqual(main.fighters.map((x) => x.name), ["Jordan Zebo", "Baissangour Chamsoudinov"]);
+  assert.deepStrictEqual(main.fighters.map((x) => x.name), ["Jordan Mercier", "Bassir Tchamaev"]);
   assert.deepStrictEqual(main.fighters.map((x) => x.record), ["11-1-0", "11-1-0"]);
   assert.strictEqual(main.weightClass, "Welterweight");
   assert.strictEqual(M.isMainEvent(sections[0], 0), true);
-  // Zebo's photo is named ...-CHAMP-..., so the main event counts as a title fight; no other bout does.
+  // Mercier's photo is named ...-CHAMP-..., so the main event counts as a title fight; no other bout does.
   assert.strictEqual(main.champion, true);
   assert.strictEqual(e.fights.filter((f) => f.champion).length, 1);
-  assert.strictEqual(M.headlinerText(e), "Jordan Zebo vs Baissangour Chamsoudinov");
+  assert.strictEqual(M.headlinerText(e), "Jordan Mercier vs Bassir Tchamaev");
   // Records come with the card, so nothing is left to look up on Sherdog.
   assert.deepStrictEqual(M.namesNeedingRecords(e, {}), []);
   assert.strictEqual(aresEvent("ARES Paris February 2027").fights.length, 0);
@@ -865,7 +887,7 @@ test("ARES: a finished card has two segments, winners and how each fight ended",
   assert.strictEqual(sections[0].fights.length, 4);
   assert.strictEqual(sections[1].fights.length, 4);
   const main = sections[0].fights[0];
-  assert.deepStrictEqual(main.fighters.map((x) => x.name), ["Aboubakar Younousov", "Tyson Nam"]);
+  assert.deepStrictEqual(main.fighters.map((x) => x.name), ["Abdoul Kasimov", "Tyson Bae"]);
   assert.strictEqual(M.outcome(main, 0), "win");
   assert.strictEqual(M.outcome(main, 1), "loss");
   assert.strictEqual(M.resultLabel(main), "R3 3:21 TKO");
@@ -1406,10 +1428,10 @@ test("parseScoreboard reads a bounded number of events from a padded response", 
 })
 
 // ---------------------------------------------------- PFL site as a second source
-// ESPN's Lyon card lacks Tandia vs Lohoré and Garnett vs Meredith, which the
-// PFL site lists; the site lacks Gittins vs Adiguzel, which ESPN lists.
-const pflEspn = M.parseScoreboard(fixture("pfl-lyon-scoreboard.json"), "pfl");
-const pflSitePages = JSON.stringify({ events: { "/event/pfl-lyon-2026": fixture("pfl-site-lyon.html") } });
+// ESPN's Lyon card lacks Diallo vs Moré and Harker vs Calder, which the
+// PFL site lists; the site lacks Pruitt vs Yildar, which ESPN lists.
+const pflEspn = M.parseScoreboard(F.pflLyonScoreboard, "pfl");
+const pflSitePages = JSON.stringify({ events: { "/event/pfl-lyon-2026": F.pflSiteLyon } });
 const lyonNames = (e) => e.fights.map((f) => f.fighters.map((x) => x.name).join(" v "));
 
 test("parsePflSite reads the bouts from the page's JSON-LD", () => {
@@ -1417,8 +1439,8 @@ test("parsePflSite reads the bouts from the page's JSON-LD", () => {
   assert.strictEqual(lyon.name, "PFL Lyon");
   assert.strictEqual(lyon.date, "2026-12-19T20:00Z");
   assert.strictEqual(lyon.fights.length, 9);
-  const t = lyon.fights.find((f) => f.fighters[0].name === "Oualy Tandia");
-  assert.strictEqual(t.fighters[1].name, "Alex Lohoré");
+  const t = lyon.fights.find((f) => f.fighters[0].name === "Oumar Diallo");
+  assert.strictEqual(t.fighters[1].name, "Alex Moré");
   assert.strictEqual(t.weightClass, "Welterweight");
   assert.strictEqual(t.startDate, "2026-12-19T20:00Z");
   assert.strictEqual(lyon.fights[0].weightClass, "Bantamweight");
@@ -1428,39 +1450,39 @@ test("applyOfficial makes ESPN's upcoming bouts match the official site's card",
   assert.strictEqual(pflEspn[0].fights.length, 8);
   const [lyon] = M.applyOfficial("pfl", pflEspn, pflSitePages);
   const names = lyonNames(lyon);
-  // The site's nine bouts: ESPN's seven matching ones plus Tandia and Garnett.
+  // The site's nine bouts: ESPN's seven matching ones plus Diallo and Harker.
   assert.strictEqual(lyon.fights.length, 9);
   assert.strictEqual(lyon.fightCount, 9);
-  assert.ok(names.includes("Oualy Tandia v Alex Lohoré"));
-  assert.ok(names.includes("Dean Garnett v Bryce Meredith"));
-  // ESPN lists Gittins vs Adiguzel, the site does not: the site rules.
-  assert.ok(!names.some((n) => /Gittins/.test(n)));
+  assert.ok(names.includes("Oumar Diallo v Alex Moré"));
+  assert.ok(names.includes("Dean Harker v Bryce Calder"));
+  // ESPN lists Pruitt vs Yildar, the site does not: the site rules.
+  assert.ok(!names.some((n) => /Pruitt/.test(n)));
   // Same bouts under different spellings are neither dropped nor added twice.
-  assert.strictEqual(names.filter((n) => /Chipito|Atangana|Lapilus/.test(n)).length, 3);
+  assert.strictEqual(names.filter((n) => /Mwamba|Etoundi|Benard/.test(n)).length, 3);
   assert.strictEqual(lyon.fights.filter((f) => f.source === "official").length, 2);
   // ESPN's data is kept for the bouts both list.
-  assert.deepStrictEqual(lyon.officialDiff.added.sort(), ["Dean Garnett vs Bryce Meredith", "Oualy Tandia vs Alex Lohoré"]);
+  assert.deepStrictEqual(lyon.officialDiff.added.sort(), ["Dean Harker vs Bryce Calder", "Oumar Diallo vs Alex Moré"]);
   assert.strictEqual(lyon.officialDiff.dropped.length, 1);
   assert.ok(lyon.fights.filter((f) => !f.source).every((f) => /^\d+$/.test(f.id)));
 });
 
 test("a replacement opponent on the site replaces ESPN's bout", () => {
   const swapped = JSON.parse(JSON.stringify(pflEspn));
-  const f = swapped[0].fights.find((x) => x.fighters.some((y) => /Meskini/.test(y.name)));
-  f.fighters[0].name = "Adam Meskini";
+  const f = swapped[0].fights.find((x) => x.fighters.some((y) => /Kessri/.test(y.name)));
+  f.fighters[0].name = "Adam Kessri";
   f.fighters[1].name = "Someone Else";
   const [lyon] = M.applyOfficial("pfl", swapped, pflSitePages);
   const names = lyonNames(lyon);
   assert.ok(!names.some((n) => /Someone Else/.test(n)));
-  assert.ok(names.some((n) => /Meskini/.test(n) && /Brachet/.test(n)));
+  assert.ok(names.some((n) => /Kessri/.test(n) && /Brassart/.test(n)));
 });
 
 test("applyOfficial keeps a finished bout and the headliner", () => {
   const finished = JSON.parse(JSON.stringify(pflEspn));
-  const g = finished[0].fights.find((x) => x.fighters.some((y) => /Gittins/.test(y.name)));
+  const g = finished[0].fights.find((x) => x.fighters.some((y) => /Pruitt/.test(y.name)));
   g.done = true;
   const [lyon] = M.applyOfficial("pfl", finished, pflSitePages);
-  assert.ok(lyonNames(lyon).some((n) => /Gittins/.test(n)));
+  assert.ok(lyonNames(lyon).some((n) => /Pruitt/.test(n)));
   assert.ok(lyon.headliner);
 });
 
@@ -1481,7 +1503,7 @@ test("a bout from the site joins the section of the ESPN bouts that start with i
   const [lyon] = M.applyOfficial("pfl", pflEspn, pflSitePages);
   const sections = M.buildCard(lyon, {});
   const main = sections.find((s) => s.key === "main");
-  assert.ok(main.fights.some((f) => f.fighters[0].name === "Oualy Tandia"));
+  assert.ok(main.fights.some((f) => f.fighters[0].name === "Oumar Diallo"));
   // ...and sorts after the bouts ESPN ranks.
   assert.strictEqual(main.fights[main.fights.length - 1].source, "official");
 });
@@ -1504,31 +1526,31 @@ test("a hostile PFL page is read in bounded time", () => {
 });
 
 // ------------------------------------------------------------ UFC's own site
-const ufcSitePages = JSON.stringify({ events: { "/event/ufc-334": fixture("ufc-334-site.html") } });
+const ufcSitePages = JSON.stringify({ events: { "/event/ufc-334": F.ufcSite334 } });
 
 test("parseUfcSite reads the bouts, their start times and the event's date", () => {
   const [e] = M.parseUfcSite(ufcSitePages);
   assert.strictEqual(e.date, "2026-11-14T22:00Z");
   assert.strictEqual(e.fights.length, 13);
-  assert.deepStrictEqual(e.fights[0].fighters.map((f) => f.name), ["Ciryl Gane", "Josh Hokit"]);
+  assert.deepStrictEqual(e.fights[0].fighters.map((f) => f.name), ["Marek Dolan", "Jonas Hale"]);
   assert.strictEqual(e.fights[0].startDate, "2026-11-15T02:00Z");
   assert.deepStrictEqual([...new Set(e.fights.map((f) => f.startDate))].sort(),
     ["2026-11-14T22:00Z", "2026-11-15T00:00Z", "2026-11-15T02:00Z"]);
   assert.deepStrictEqual(e.fights.slice(0, 3).map((f) => f.weightClass), ["Heavyweight", "Women's Bantamweight", "Middleweight"]);
   // A fighter whose name is plain text in the link, not two spans.
-  assert.ok(e.fights.some((f) => f.fighters[0].name === "Uroš Medić" && f.fighters[1].name === "Kevin Holland"));
+  assert.ok(e.fights.some((f) => f.fighters[0].name === "Miloš Petrić" && f.fighters[1].name === "Kevin Harlan"));
 });
 
 test("applyOfficial drops a UFC bout ufc.com no longer lists and keeps the rest", () => {
   const ev = M.applyOfficial("ufc", ufc, ufcSitePages);
   const e = byName(ev, "UFC 334");
   assert.strictEqual(e.fights.length, 13);
-  assert.deepStrictEqual(e.officialDiff.dropped, ["Nazim Sadykhov vs Jefferson Nascimento"]);
+  assert.deepStrictEqual(e.officialDiff.dropped, ["Rustam Aliyev vs Jefferson Prado"]);
   assert.deepStrictEqual(e.officialDiff.added, []);
-  // Accents differ between the two ("Yañez"/"Yanez"), and nothing else is touched.
+  // Accents differ between the two ("Nuñez"/"Nunez"), and nothing else is touched.
   assert.ok(e.fights.every((f) => !f.source));
-  assert.strictEqual(byName(ev, "Moicano").fights.length, 12);
-  assert.strictEqual(byName(ev, "Moicano").officialDiff, undefined);
+  assert.strictEqual(byName(ev, "Varga").fights.length, 12);
+  assert.strictEqual(byName(ev, "Varga").officialDiff, undefined);
 });
 
 test("generational suffixes do not make two different fighters the same", () => {
@@ -1545,7 +1567,7 @@ test("a hostile UFC page is read in bounded time", () => {
 });
 
 test("a UFC page that comes back in another language is never shown in it", () => {
-  const french = fixture("ufc-334-site.html")
+  const french = F.ufcSite334
     .replace('<html lang="en"', '<html lang="fr"')
     .replace(/Heavyweight Title Bout/g, "Heavyweight Combat de championnat");
   const [e] = M.parseUfcSite(JSON.stringify({ events: { "/event/ufc-334": french } }));
@@ -1561,7 +1583,7 @@ test("bin/mma-api asks ufc.com for English on every request", () => {
 
 test("bouts added from the official site survive the cache", () => {
   const bout = { id: "official-pfl-1680", weightClass: "Welterweight", startDate: "2026-12-19T20:00Z", status: "STATUS_SCHEDULED", done: false,
-    fighters: [{ name: "Oualy Tandia" }, { name: "Alex Lohoré" }], source: "official" };
+    fighters: [{ name: "Oumar Diallo" }, { name: "Alex Moré" }], source: "official" };
   const ev = { id: "600001", org: "pfl", name: "PFL Lyon", date: "2026-12-19T16:00Z", fights: [bout] };
   const back = M.parseCache(M.serializeCache([ev], 1)).events[0];
   assert.strictEqual(back.fights.length, 1);

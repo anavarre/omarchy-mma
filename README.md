@@ -210,11 +210,17 @@ what it accepts back are both bounded:
 tests/run
 ```
 
-Runs `Model.js` against saved ESPN and Wikipedia responses in `tests/fixtures/` and
-checks `bin/mma-api`'s argument handling, `bin/mma-paste`'s byte and time caps
+Runs `Model.js` against saved Wikipedia responses in `tests/fixtures/` and against
+responses in the shape of ESPN's, ufc.com's, pflmma.com's, aresfighting.com's and
+Sherdog's, which `tests/fixtures.js` writes from invented data, and checks `bin/mma-api`'s argument handling, `bin/mma-paste`'s byte and time caps
 against a fake `wl-paste`, and, with `qmltestrunner` (`qt6-declarative`)
 installed, that real paste keys and clicks in the search box never reach Qt's
 native paste. No network or display needed.
+
+CI runs the same script on Arch Linux for every push and pull request. Each run
+uploads a `validation-report-<commit>` artifact (kept 90 days) and prints the
+same report in the run's summary: the commit and tree that were checked out and
+tested, the tool versions, the full output of `tests/run` and its result.
 
 ## Uninstall
 
@@ -233,27 +239,31 @@ running `omarchy plugin remove`. Also remove any leftover `anavarre.mma` entry f
 
 The MIT license below covers this project's own code and text. It does not cover
 the logos in `assets/` or the saved responses in `tests/fixtures/`, which are
-third-party material under the terms listed here. Every logo is a trademark of
-its promotion, whatever the copyright status of the image; it is used only to
-identify that promotion's events, and no endorsement is implied.
+third-party material under the terms listed here: each is in the public domain
+or under a Creative Commons license that allows redistribution. Every logo is a
+trademark of its promotion, whatever the copyright status of the image; it is
+used only to identify that promotion's events, and no endorsement is implied.
 
 ### Logos (`assets/`)
 
 Every bundled copy is resized to 128×128 and re-encoded as an 8-bit palette PNG.
-Other changes are listed per file. Licenses are as stated on each source page
+Other changes are listed per file. Only logos whose source states a public
+domain or free license are bundled. Licenses are as stated on each source page
 when checked (November 2026).
 
 | File | Source | License as stated at the source | Changes |
 |---|---|---|---|
-| `ufc.png` | ESPN league logo, [a.espncdn.com/i/teamlogos/leagues/500/ufc.png](https://a.espncdn.com/i/teamlogos/leagues/500/ufc.png) | None stated. Logo © UFC (Zuffa, LLC) | Resized |
-| `pfl.png` | ESPN league logo, [a.espncdn.com/i/teamlogos/leagues/500/pfl.png](https://a.espncdn.com/i/teamlogos/leagues/500/pfl.png) | None stated. Logo © Professional Fighters League | Resized |
+| `ufc.png` | [File:UFC_Logo.svg](https://commons.wikimedia.org/wiki/File:UFC_Logo.svg), Wikimedia Commons. Author: UFC; uploaded by TBMNY | Public domain (PD-textlogo), trademarked | Rasterized |
 | `cw.png` | [File:Cage_Warriors_logo.png](https://commons.wikimedia.org/wiki/File:Cage_Warriors_logo.png), Wikimedia Commons. Author: Cage Warriors; uploaded by AddedUpdatePoster | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | Cropped to the circular emblem, placed on a dark tile. This derivative is likewise CC BY-SA 4.0 |
 | `ksw.png` | [File:Konfrontacja_Sztuk_Walki_logo.png](https://commons.wikimedia.org/wiki/File:Konfrontacja_Sztuk_Walki_logo.png), Wikimedia Commons | Public domain (PD-textlogo) | Resized |
-| `ares.png` | ARES Fighting Championship's site logo, [aresfighting.com](https://www.aresfighting.com/) | All rights reserved ([legal notice](https://www.aresfighting.com/legal-notice)) | Resized |
+| `ares.png` | [File:Logo_ARES_Fighting_Championship_logo.svg](https://commons.wikimedia.org/wiki/File:Logo_ARES_Fighting_Championship_logo.svg), Wikimedia Commons. Author: Vivendi sports | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | Rasterized, recolored white, placed on a dark tile. This derivative is likewise CC BY-SA 4.0 |
 | `oktagon.png` | [File:Oktagon_logo.png](https://commons.wikimedia.org/wiki/File:Oktagon_logo.png), Wikimedia Commons. Author: Jakub.schroder | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | Placed on a dark tile. This derivative is likewise CC BY-SA 4.0 |
 | `hxmma.png` | [File:Hexagone_MMA_Winamax_logo.svg](https://commons.wikimedia.org/wiki/File:Hexagone_MMA_Winamax_logo.svg), Wikimedia Commons | Public domain (PD-logo), trademarked | Cropped to the hexagon emblem, rasterized |
 | `aca.png` | [File:Absolute_Championship_Akhmat_logo.png](https://en.wikipedia.org/wiki/File:Absolute_Championship_Akhmat_logo.png), English Wikipedia | Public domain (PD-textlogo) | Resized |
 | `one.png` | [File:ONE_Championship_company_logo.png](https://en.wikipedia.org/wiki/File:ONE_Championship_company_logo.png), English Wikipedia | Public domain in the US (PD-textlogo, PD-ineligible-USonly), trademarked | Resized |
+
+PFL has no bundled logo: no source states terms that clearly allow one to be
+redistributed, so the list shows its name instead.
 
 ### Test fixtures (`tests/fixtures/`)
 
@@ -267,11 +277,12 @@ tests only; the plugin itself never reads them.
 | `oktagon-2026-wiki.json` | Wikipedia, [2026 in Oktagon MMA](https://en.wikipedia.org/wiki/2026_in_Oktagon_MMA) ([history](https://en.wikipedia.org/w/index.php?title=2026_in_Oktagon_MMA&action=history)), as above | CC BY-SA 4.0, Wikipedia contributors |
 | `aca-2026-wiki.json` | Wikipedia, [2026 in Absolute Championship Akhmat](https://en.wikipedia.org/wiki/2026_in_Absolute_Championship_Akhmat) ([history](https://en.wikipedia.org/w/index.php?title=2026_in_Absolute_Championship_Akhmat&action=history)), as above | CC BY-SA 4.0, Wikipedia contributors |
 | `one-2026-wiki.json` | Wikipedia, [2026 in ONE Championship](https://en.wikipedia.org/wiki/2026_in_ONE_Championship) ([history](https://en.wikipedia.org/w/index.php?title=2026_in_ONE_Championship&action=history)), an excerpt of its wikitext in the API's response shape | CC BY-SA 4.0, Wikipedia contributors |
-| `ufc-scoreboard.json`, `ufc-334-cards.json`, `pfl-scoreboard.json`, `pfl-lyon-scoreboard.json` | ESPN's public API (`site.api.espn.com`, `sports.core.api.espn.com`) | None stated; © ESPN |
-| `ufc-334-site.html` | An event page of [ufc.com](https://www.ufc.com/events) | None stated; © UFC |
-| `pfl-site-lyon.html` | An event page of [pflmma.com](https://pflmma.com/events) | None stated; © Professional Fighters League |
-| `ares-2026.json` | Listing, fight-card and result pages of [aresfighting.com](https://www.aresfighting.com/events/) | All rights reserved ([legal notice](https://www.aresfighting.com/legal-notice)) |
-| `hxmma-2026.json` | Hexagone MMA's [Sherdog organization page](https://www.sherdog.com/organizations/Hexagone-MMA-16693) and its event pages | None stated; © Sherdog |
+
+No response of ESPN, ufc.com, pflmma.com, aresfighting.com or Sherdog is
+bundled: those services publish no terms that allow it. The tests for their
+parsers run on responses that `tests/fixtures.js` builds, in the same shape,
+from invented fighters, records, results and venues. That file is this
+project's own work, under the MIT license.
 
 ## License
 
