@@ -19,7 +19,9 @@ import Quickshell.Io
 // left behind once the command is gone. So whenever a run fails or times out,
 // its whole group is sent SIGKILL as well. A process group id is never reused
 // while any member is alive, so this can only reach what the run left behind;
-// orphans are reaped by init (or the session's subreaper).
+// orphans are reaped by init (or the session's subreaper). A run still going
+// when this object is destroyed (plugin unloaded, shell stopped) gets the
+// same SIGKILL to its group.
 // A run that has settled is over for its caller: whatever it reports later
 // (a late exit, its output) is ignored, and a timed-out run's output is never
 // to be parsed: it may be cut anywhere. Start runs with launch(), never by
@@ -69,6 +71,13 @@ Process {
   }
 
   onStarted: proc.group = Number(proc.processId) || 0
+
+  // Unloading the plugin or stopping the shell mid-run destroys this object,
+  // and with it the watchdog; Qt then kills timeout(1) alone, and its
+  // parent-death signal reaches only the command it runs, not what that
+  // started. So the whole group goes first. Only while timeout(1) still runs:
+  // it leads the group, so the id cannot have been reused yet.
+  Component.onDestruction: if (proc.running) proc.killGroup()
 
   onExited: function(exitCode, exitStatus) {
     // A crashed process has no exit code worth reading (0 is QProcess.NormalExit).

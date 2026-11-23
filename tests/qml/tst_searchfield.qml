@@ -88,6 +88,59 @@ Item {
       compare(field.cursorPosition, 9)
     }
 
+    // A writable TextInput reads clipboard text on every clipboard change
+    // (Qt without qtdeclarative bcbfae67); a read-only one does not.
+    function test_field_is_read_only_to_qt() {
+      verify(field.readOnly)
+      verify(!field.canPaste)
+      verify(field.cursorVisible)
+    }
+
+    function test_editing_keys() {
+      keyClick(Qt.Key_J); keyClick(Qt.Key_O); keyClick(Qt.Key_N)
+      keyClick(Qt.Key_Space); keyClick(Qt.Key_J); keyClick(Qt.Key_O)
+      compare(field.text, "jon jo")
+      keyClick(Qt.Key_Backspace)
+      compare(field.text, "jon j")
+      keyClick(Qt.Key_Backspace, Qt.ControlModifier)
+      compare(field.text, "jon ")
+      keyClick(Qt.Key_Home)
+      keyClick(Qt.Key_Delete)
+      compare(field.text, "on ")
+      keyClick(Qt.Key_Delete, Qt.ControlModifier)
+      compare(field.text, " ")
+      keyClick(Qt.Key_Return); keyClick(Qt.Key_Tab, Qt.NoModifier)
+      compare(field.text, " ")
+    }
+
+    function test_typing_replaces_selection() {
+      field.text = "jon smith"
+      field.select(4, 9)
+      keyClick(Qt.Key_X)
+      compare(field.text, "jon x")
+      compare(field.cursorPosition, 5)
+    }
+
+    function test_cut_copies_and_removes() {
+      field.text = "jon jones"
+      field.select(0, 4)
+      keyClick(Qt.Key_X, Qt.ControlModifier)
+      compare(field.text, "jones")
+      plain.forceActiveFocus()
+      keyClick(Qt.Key_V, Qt.ControlModifier)
+      compare(plain.text, "jon ")
+    }
+
+    function test_navigation_still_works() {
+      field.text = "ab"
+      field.cursorPosition = 2
+      keyClick(Qt.Key_Left)
+      keyClick(Qt.Key_C)
+      compare(field.text, "acb")
+      keyClick(Qt.Key_A, Qt.ControlModifier)
+      compare(field.selectedText, "acb")
+    }
+
     function test_typing_is_capped() {
       field.text = new Array(100).join("a")
       keyClick(Qt.Key_B); keyClick(Qt.Key_C)
